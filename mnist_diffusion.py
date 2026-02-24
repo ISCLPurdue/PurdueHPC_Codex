@@ -328,6 +328,13 @@ def write_run_dashboard(metrics_path: str, outdir: str, refresh_seconds: int) ->
       document.getElementById('zoom-reset').onclick = () => {{ scale = 1; applyScale(); }};
       modal.onclick = (e) => {{ if (e.target === modal) modal.style.display = 'none'; }};
 
+      let runTimer = null;
+      function stopRunRefreshIfDone(status) {{
+        if ((status || '').toLowerCase() === 'completed' && runTimer) {{
+          clearInterval(runTimer);
+          runTimer = null;
+        }}
+      }}
       function refreshRunArtifacts() {{
         const t = Date.now();
         imgs.forEach((img) => {{
@@ -341,9 +348,11 @@ def write_run_dashboard(metrics_path: str, outdir: str, refresh_seconds: int) ->
           document.getElementById('total-steps').textContent = m.total_steps;
           document.getElementById('final-loss').textContent = (m.final_epoch_loss ?? '').toString();
           document.getElementById('best-loss').textContent = (m.best_epoch_loss ?? '').toString();
+          stopRunRefreshIfDone(m.status);
         }}).catch(() => {{}});
       }}
-      setInterval(refreshRunArtifacts, refreshMs);
+      runTimer = setInterval(refreshRunArtifacts, refreshMs);
+      stopRunRefreshIfDone(document.getElementById('run-status').textContent);
     }})();
   </script>
 </body>
@@ -383,6 +392,13 @@ def write_root_dashboard(outputs_root: str, refresh_seconds: int) -> str:
       const tagEl = document.getElementById('run-tag');
       let lastTag = '';
 
+      let rootTimer = null;
+      function stopRootRefreshIfDone(status) {{
+        if ((status || '').toLowerCase() === 'completed' && rootTimer) {{
+          clearInterval(rootTimer);
+          rootTimer = null;
+        }}
+      }}
       function refresh() {{
         const t = Date.now();
         fetch('LATEST_RUN.txt?t=' + t).then(r => r.text()).then(txt => {{
@@ -395,6 +411,9 @@ def write_root_dashboard(outputs_root: str, refresh_seconds: int) -> str:
             }} else {{
               frame.contentWindow.location.reload();
             }}
+            fetch('current/metrics.json?t=' + t).then(r => r.json()).then(m => {{
+              stopRootRefreshIfDone(m.status);
+            }}).catch(() => {{}});
           }}
         }}).catch(() => {{
           frame.src = 'current/dashboard.html?t=' + t;
@@ -402,7 +421,7 @@ def write_root_dashboard(outputs_root: str, refresh_seconds: int) -> str:
       }}
 
       refresh();
-      setInterval(refresh, refreshMs);
+      rootTimer = setInterval(refresh, refreshMs);
     }})();
   </script>
 </body>

@@ -83,6 +83,7 @@ Then open:
 Notes:
 - `http://localhost:8080/dashboard.html` now serves a live root dashboard that always follows `outputs/LATEST_RUN.txt` and `outputs/current`.
 - The run dashboard refreshes periodically and supports click-to-zoom controls (`+`, `-`, `reset`) on images.
+- Refresh polling stops automatically when the run status becomes `completed`.
 
 ### Dashboard preview
 
