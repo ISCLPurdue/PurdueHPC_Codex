@@ -82,16 +82,16 @@ class UNetDenoiser(nn.Module):
         self.stem = nn.Conv2d(1, 64, 3, padding=1)
 
         self.down1 = ResidualBlock(64, 64, time_hidden)
-        self.downsample1 = nn.Conv2d(64, 128, 4, stride=2, padding=1)  # 28 -> 14
+        self.downsample1 = nn.Conv2d(64, 128, 4, stride=2, padding=1)
         self.down2 = ResidualBlock(128, 128, time_hidden)
-        self.downsample2 = nn.Conv2d(128, 256, 4, stride=2, padding=1)  # 14 -> 7
+        self.downsample2 = nn.Conv2d(128, 256, 4, stride=2, padding=1)
 
         self.mid1 = ResidualBlock(256, 256, time_hidden)
         self.mid2 = ResidualBlock(256, 256, time_hidden)
 
-        self.up1 = nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1)  # 7 -> 14
+        self.up1 = nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1)
         self.up_block1 = ResidualBlock(256, 128, time_hidden)
-        self.up2 = nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1)  # 14 -> 28
+        self.up2 = nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1)
         self.up_block2 = ResidualBlock(128, 64, time_hidden)
 
         self.out_norm = build_group_norm(64)
@@ -153,7 +153,6 @@ class DDPM:
             alpha_t = self.alphas[i]
             alpha_bar_t = self.alpha_bar[i]
             beta_t = self.betas[i]
-
             mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
 
             if i > 0:
@@ -221,8 +220,8 @@ def save_architecture_schematic(outdir: str) -> str:
     blocks = [
         (0.02, 0.60, 0.16, 0.18, "Input x_t\\n1x28x28"),
         (0.22, 0.60, 0.16, 0.18, "Stem Conv\\n1->64"),
-        (0.42, 0.60, 0.16, 0.18, "Down Block 1\\nRes(64)") ,
-        (0.62, 0.60, 0.16, 0.18, "Down Block 2\\nRes(128)") ,
+        (0.42, 0.60, 0.16, 0.18, "Down Block 1\\nRes(64)"),
+        (0.62, 0.60, 0.16, 0.18, "Down Block 2\\nRes(128)"),
         (0.82, 0.60, 0.16, 0.18, "Bottleneck\\nRes(256) x2"),
         (0.62, 0.28, 0.16, 0.18, "Up Block 1\\nRes(256->128)"),
         (0.42, 0.28, 0.16, 0.18, "Up Block 2\\nRes(128->64)"),
@@ -258,7 +257,7 @@ def save_architecture_schematic(outdir: str) -> str:
     return schematic_path
 
 
-def write_dashboard(metrics_path: str, outdir: str) -> str:
+def write_run_dashboard(metrics_path: str, outdir: str, refresh_seconds: int) -> str:
     dashboard_path = os.path.join(outdir, "dashboard.html")
     with open(metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
@@ -273,43 +272,80 @@ def write_dashboard(metrics_path: str, outdir: str) -> str:
     body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; margin: 2rem; background: #f5f7fb; color: #111827; }}
     .card {{ background: #fff; border-radius: 12px; padding: 1rem 1.25rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 1rem; }}
     .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }}
-    img {{ max-width: 100%; border-radius: 8px; border: 1px solid #e5e7eb; }}
+    .zoomable {{ max-width: 100%; border-radius: 8px; border: 1px solid #e5e7eb; cursor: zoom-in; }}
     code {{ background: #eef2ff; padding: 0.15rem 0.35rem; border-radius: 6px; }}
+    .modal {{ display:none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 2000; }}
+    .modal-content {{ position:absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 92vw; max-height: 88vh; overflow: auto; }}
+    .modal img {{ transform-origin: center center; }}
+    .controls {{ position: absolute; top: 1rem; right: 1rem; display: flex; gap: .5rem; }}
+    .btn {{ border: none; border-radius: 8px; padding: .45rem .6rem; background: #fff; cursor: pointer; }}
   </style>
 </head>
 <body>
   <h1>MNIST Diffusion Dashboard</h1>
   <div class=\"card\">
-    <p><strong>Run tag:</strong> {metrics['run_tag']}</p>
-    <p><strong>Started (UTC):</strong> {metrics['started_utc']}</p>
-    <p><strong>Finished (UTC):</strong> {metrics['finished_utc']}</p>
-    <p><strong>Device:</strong> {metrics['device']}</p>
-    <p><strong>Total steps:</strong> {metrics['total_steps']}</p>
-    <p><strong>Final epoch mean loss:</strong> {metrics['final_epoch_loss']:.6f}</p>
-    <p><strong>Best epoch mean loss:</strong> {metrics['best_epoch_loss']:.6f}</p>
+    <p><strong>Run tag:</strong> {metrics.get('run_tag')}</p>
+    <p><strong>Status:</strong> <span id=\"run-status\">{metrics.get('status', 'unknown')}</span></p>
+    <p><strong>Current epoch:</strong> <span id=\"current-epoch\">{metrics.get('current_epoch', 0)}</span> / {metrics.get('epochs')}</p>
+    <p><strong>Started (UTC):</strong> {metrics.get('started_utc')}</p>
+    <p><strong>Finished (UTC):</strong> <span id=\"finished-at\">{metrics.get('finished_utc')}</span></p>
+    <p><strong>Device:</strong> {metrics.get('device')}</p>
+    <p><strong>Total steps:</strong> <span id=\"total-steps\">{metrics.get('total_steps')}</span></p>
+    <p><strong>Final epoch mean loss:</strong> <span id=\"final-loss\">{metrics.get('final_epoch_loss')}</span></p>
+    <p><strong>Best epoch mean loss:</strong> <span id=\"best-loss\">{metrics.get('best_epoch_loss')}</span></p>
   </div>
   <div class=\"grid\">
-    <div class=\"card\">
-      <h3>Generated samples</h3>
-      <img src=\"mnist_samples.png\" alt=\"MNIST samples\" />
-    </div>
-    <div class=\"card\">
-      <h3>Step loss</h3>
-      <img src=\"loss_curve_step.png\" alt=\"Step loss\" />
-    </div>
-    <div class=\"card\">
-      <h3>Epoch loss</h3>
-      <img src=\"loss_curve_epoch.png\" alt=\"Epoch loss\" />
-    </div>
-    <div class=\"card\">
-      <h3>Model architecture</h3>
-      <img src=\"architecture_schematic.png\" alt=\"Architecture schematic\" />
-    </div>
+    <div class=\"card\"><h3>Generated samples</h3><img class=\"zoomable\" src=\"mnist_samples.png\" alt=\"MNIST samples\" /></div>
+    <div class=\"card\"><h3>Step loss</h3><img class=\"zoomable\" src=\"loss_curve_step.png\" alt=\"Step loss\" /></div>
+    <div class=\"card\"><h3>Epoch loss</h3><img class=\"zoomable\" src=\"loss_curve_epoch.png\" alt=\"Epoch loss\" /></div>
+    <div class=\"card\"><h3>Model architecture</h3><img class=\"zoomable\" src=\"architecture_schematic.png\" alt=\"Architecture schematic\" /></div>
   </div>
-  <div class=\"card\">
-    <h3>Raw outputs</h3>
-    <p><code>metrics.json</code>, <code>loss_history.csv</code>, <code>architecture_schematic.png</code>, checkpoints per epoch.</p>
+  <div class=\"card\"><h3>Raw outputs</h3><p><code>metrics.json</code>, <code>loss_history.csv</code>, <code>architecture_schematic.png</code>, checkpoints per epoch.</p></div>
+
+  <div id=\"zoom-modal\" class=\"modal\">
+    <div class=\"controls\">
+      <button class=\"btn\" id=\"zoom-in\">+</button>
+      <button class=\"btn\" id=\"zoom-out\">-</button>
+      <button class=\"btn\" id=\"zoom-reset\">reset</button>
+      <button class=\"btn\" id=\"zoom-close\">close</button>
+    </div>
+    <div class=\"modal-content\"><img id=\"zoom-img\" src=\"\" alt=\"zoom\" /></div>
   </div>
+
+  <script>
+    (function() {{
+      const refreshMs = {refresh_seconds} * 1000;
+      const imgs = document.querySelectorAll('.zoomable');
+      const modal = document.getElementById('zoom-modal');
+      const zoomImg = document.getElementById('zoom-img');
+      let scale = 1;
+
+      function applyScale() {{ zoomImg.style.transform = `scale(${{scale}})`; }}
+      imgs.forEach((img) => img.addEventListener('click', () => {{ zoomImg.src = img.src; scale = 1; applyScale(); modal.style.display = 'block'; }}));
+      document.getElementById('zoom-close').onclick = () => modal.style.display = 'none';
+      document.getElementById('zoom-in').onclick = () => {{ scale = Math.min(6, scale + 0.2); applyScale(); }};
+      document.getElementById('zoom-out').onclick = () => {{ scale = Math.max(0.3, scale - 0.2); applyScale(); }};
+      document.getElementById('zoom-reset').onclick = () => {{ scale = 1; applyScale(); }};
+      modal.onclick = (e) => {{ if (e.target === modal) modal.style.display = 'none'; }};
+
+      function refreshRunArtifacts() {{
+        const t = Date.now();
+        imgs.forEach((img) => {{
+          const clean = img.src.split('?')[0];
+          img.src = clean + '?t=' + t;
+        }});
+        fetch('metrics.json?t=' + t).then(r => r.json()).then(m => {{
+          document.getElementById('run-status').textContent = m.status;
+          document.getElementById('current-epoch').textContent = m.current_epoch;
+          document.getElementById('finished-at').textContent = m.finished_utc || '';
+          document.getElementById('total-steps').textContent = m.total_steps;
+          document.getElementById('final-loss').textContent = (m.final_epoch_loss ?? '').toString();
+          document.getElementById('best-loss').textContent = (m.best_epoch_loss ?? '').toString();
+        }}).catch(() => {{}});
+      }}
+      setInterval(refreshRunArtifacts, refreshMs);
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -318,14 +354,103 @@ def write_dashboard(metrics_path: str, outdir: str) -> str:
     return dashboard_path
 
 
+def write_root_dashboard(outputs_root: str, refresh_seconds: int) -> str:
+    root_dashboard = os.path.join(outputs_root, "dashboard.html")
+    html = f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>MNIST Diffusion Live Dashboard</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; margin: 1rem; background: #f5f7fb; color: #111827; }}
+    .bar {{ display:flex; gap:1rem; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; }}
+    .pill {{ background:#e5edff; border-radius:999px; padding: .25rem .7rem; }}
+    iframe {{ width: 100%; height: calc(100vh - 100px); border: 1px solid #d1d5db; border-radius: 12px; background: #fff; }}
+  </style>
+</head>
+<body>
+  <div class=\"bar\">
+    <strong>Live Dashboard</strong>
+    <span class=\"pill\">refresh: every {refresh_seconds}s</span>
+    <span>latest run: <code id=\"run-tag\">(loading)</code></span>
+  </div>
+  <iframe id=\"dash\" src=\"current/dashboard.html\"></iframe>
+  <script>
+    (function() {{
+      const refreshMs = {refresh_seconds} * 1000;
+      const frame = document.getElementById('dash');
+      const tagEl = document.getElementById('run-tag');
+      let lastTag = '';
+
+      function refresh() {{
+        const t = Date.now();
+        fetch('LATEST_RUN.txt?t=' + t).then(r => r.text()).then(txt => {{
+          const tag = txt.trim();
+          if (tag) {{
+            tagEl.textContent = tag;
+            if (tag !== lastTag) {{
+              frame.src = 'current/dashboard.html?t=' + t;
+              lastTag = tag;
+            }} else {{
+              frame.contentWindow.location.reload();
+            }}
+          }}
+        }}).catch(() => {{
+          frame.src = 'current/dashboard.html?t=' + t;
+        }});
+      }}
+
+      refresh();
+      setInterval(refresh, refreshMs);
+    }})();
+  </script>
+</body>
+</html>
+"""
+    with open(root_dashboard, "w", encoding="utf-8") as f:
+        f.write(html)
+    return root_dashboard
+
+
+def write_latest_run(outputs_root: str, run_tag: str) -> str:
+    latest_path = os.path.join(outputs_root, "LATEST_RUN.txt")
+    with open(latest_path, "w", encoding="utf-8") as f:
+        f.write(run_tag + "\n")
+    return latest_path
+
+
+def update_current_symlink(outputs_root: str, run_tag: str) -> None:
+    target = run_tag
+    link_path = os.path.join(outputs_root, "current")
+    try:
+        if os.path.islink(link_path) or os.path.exists(link_path):
+            os.unlink(link_path)
+    except FileNotFoundError:
+        pass
+    os.symlink(target, link_path)
+
+
+def write_metrics(outdir: str, metrics: dict) -> str:
+    metrics_path = os.path.join(outdir, "metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    return metrics_path
+
+
 def train(args: argparse.Namespace) -> None:
     run_tag = args.run_tag or datetime.now(timezone.utc).strftime("mnist_ddpm_%Y%m%d_%H%M%S")
     outdir = os.path.join(args.outdir, run_tag)
+    outputs_root = args.outdir
     os.makedirs(outdir, exist_ok=True)
+    os.makedirs(outputs_root, exist_ok=True)
+
+    write_latest_run(outputs_root=outputs_root, run_tag=run_tag)
+    update_current_symlink(outputs_root=outputs_root, run_tag=run_tag)
+    write_root_dashboard(outputs_root=outputs_root, refresh_seconds=args.dashboard_refresh_seconds)
 
     started = datetime.now(timezone.utc)
     wall_start = time.time()
-
     device = torch.device("cuda" if torch.cuda.is_available() and not args.force_cpu else "cpu")
 
     transform = transforms.Compose([
@@ -344,24 +469,26 @@ def train(args: argparse.Namespace) -> None:
 
     model = UNetDenoiser(time_dim=args.time_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-
-    diffusion = DDPM(
-        DiffusionConfig(timesteps=args.timesteps, beta_start=args.beta_start, beta_end=args.beta_end),
-        device=device,
-    )
+    diffusion = DDPM(DiffusionConfig(timesteps=args.timesteps, beta_start=args.beta_start, beta_end=args.beta_end), device=device)
 
     step_losses: list[float] = []
     epoch_losses: list[float] = []
     csv_path = os.path.join(outdir, "loss_history.csv")
+    sample_img_path = os.path.join(outdir, "mnist_samples.png")
+    architecture_plot = save_architecture_schematic(outdir=outdir)
+
     with open(csv_path, "w", newline="", encoding="utf-8") as csv_f:
         writer = csv.writer(csv_f)
         writer.writerow(["step", "epoch", "loss"])
 
         global_step = 0
+        latest_sample_epoch = 0
+
         for epoch in range(args.epochs):
             pbar = tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}")
             running_loss = 0.0
             epoch_steps = 0
+
             for x0, _ in pbar:
                 x0 = x0.to(device)
                 t = torch.randint(0, args.timesteps, (x0.shape[0],), device=device)
@@ -383,54 +510,66 @@ def train(args: argparse.Namespace) -> None:
                 writer.writerow([global_step, epoch + 1, f"{loss_value:.8f}"])
                 pbar.set_postfix(loss=f"{loss_value:.4f}", step=global_step)
 
+            csv_f.flush()
             mean_epoch_loss = running_loss / max(epoch_steps, 1)
             epoch_losses.append(mean_epoch_loss)
+
             ckpt = os.path.join(outdir, f"mnist_ddpm_epoch_{epoch + 1}.pt")
             torch.save({"model": model.state_dict(), "epoch": epoch + 1, "args": vars(args)}, ckpt)
+
+            step_plot, epoch_plot = save_loss_plots(step_losses=step_losses, epoch_losses=epoch_losses, outdir=outdir)
+
+            should_sample = (epoch == 0) or ((epoch + 1) % args.sample_every == 0) or ((epoch + 1) == args.epochs)
+            if should_sample:
+                samples = diffusion.sample(model, num_samples=args.num_samples)
+                save_grid(samples, sample_img_path)
+                latest_sample_epoch = epoch + 1
+
+            metrics = {
+                "run_tag": run_tag,
+                "status": "running" if (epoch + 1) < args.epochs else "completed",
+                "current_epoch": epoch + 1,
+                "latest_sample_epoch": latest_sample_epoch,
+                "started_utc": started.isoformat(),
+                "finished_utc": None,
+                "elapsed_seconds": round(time.time() - wall_start, 2),
+                "device": str(device),
+                "total_steps": len(step_losses),
+                "epochs": args.epochs,
+                "final_epoch_loss": float(epoch_losses[-1]) if epoch_losses else None,
+                "best_epoch_loss": float(min(epoch_losses)) if epoch_losses else None,
+                "sample_image": os.path.basename(sample_img_path),
+                "step_loss_plot": os.path.basename(step_plot),
+                "epoch_loss_plot": os.path.basename(epoch_plot),
+                "architecture_schematic": os.path.basename(architecture_plot),
+                "loss_csv": os.path.basename(csv_path),
+            }
+
+            metrics_path = write_metrics(outdir=outdir, metrics=metrics)
+            write_run_dashboard(metrics_path=metrics_path, outdir=outdir, refresh_seconds=args.dashboard_refresh_seconds)
             print(f"Epoch {epoch + 1} mean loss: {mean_epoch_loss:.6f}")
 
-    samples = diffusion.sample(model, num_samples=args.num_samples)
-    sample_img_path = os.path.join(outdir, "mnist_samples.png")
-    save_grid(samples, sample_img_path)
-
-    step_plot, epoch_plot = save_loss_plots(step_losses=step_losses, epoch_losses=epoch_losses, outdir=outdir)
-    architecture_plot = save_architecture_schematic(outdir=outdir)
-
     finished = datetime.now(timezone.utc)
-    metrics = {
-        "run_tag": run_tag,
-        "started_utc": started.isoformat(),
-        "finished_utc": finished.isoformat(),
-        "elapsed_seconds": round(time.time() - wall_start, 2),
-        "device": str(device),
-        "total_steps": len(step_losses),
-        "epochs": args.epochs,
-        "final_epoch_loss": float(epoch_losses[-1]) if epoch_losses else None,
-        "best_epoch_loss": float(min(epoch_losses)) if epoch_losses else None,
-        "sample_image": os.path.basename(sample_img_path),
-        "step_loss_plot": os.path.basename(step_plot),
-        "epoch_loss_plot": os.path.basename(epoch_plot),
-        "architecture_schematic": os.path.basename(architecture_plot),
-        "loss_csv": os.path.basename(csv_path),
-    }
-
-    metrics_path = os.path.join(outdir, "metrics.json")
-    with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-
-    dashboard_path = write_dashboard(metrics_path=metrics_path, outdir=outdir)
-
-    latest_path = os.path.join(args.outdir, "LATEST_RUN.txt")
-    with open(latest_path, "w", encoding="utf-8") as f:
-        f.write(run_tag + "\n")
+    final_metrics_path = os.path.join(outdir, "metrics.json")
+    with open(final_metrics_path, "r", encoding="utf-8") as f:
+        final_metrics = json.load(f)
+    final_metrics["status"] = "completed"
+    final_metrics["finished_utc"] = finished.isoformat()
+    final_metrics["elapsed_seconds"] = round(time.time() - wall_start, 2)
+    write_metrics(outdir=outdir, metrics=final_metrics)
+    write_run_dashboard(metrics_path=final_metrics_path, outdir=outdir, refresh_seconds=args.dashboard_refresh_seconds)
+    write_latest_run(outputs_root=outputs_root, run_tag=run_tag)
+    update_current_symlink(outputs_root=outputs_root, run_tag=run_tag)
+    write_root_dashboard(outputs_root=outputs_root, refresh_seconds=args.dashboard_refresh_seconds)
 
     print(f"Training complete on {device}")
     print(f"Run output directory: {outdir}")
-    print(f"Dashboard: {dashboard_path}")
+    print(f"Run dashboard: {os.path.join(outdir, 'dashboard.html')}")
+    print(f"Live dashboard: {os.path.join(outputs_root, 'dashboard.html')}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Train simple DDPM for MNIST")
+    p = argparse.ArgumentParser(description="Train DDPM for MNIST")
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -440,6 +579,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--time-dim", type=int, default=128)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--num-samples", type=int, default=64)
+    p.add_argument("--sample-every", type=int, default=5)
+    p.add_argument("--dashboard-refresh-seconds", type=int, default=10)
     p.add_argument("--data-dir", default="./data")
     p.add_argument("--outdir", default="./outputs")
     p.add_argument("--run-tag", default="")

@@ -80,6 +80,10 @@ Then open:
 
 `http://localhost:8080/dashboard.html`
 
+Notes:
+- `http://localhost:8080/dashboard.html` now serves a live root dashboard that always follows `outputs/LATEST_RUN.txt` and `outputs/current`.
+- The run dashboard refreshes periodically and supports click-to-zoom controls (`+`, `-`, `reset`) on images.
+
 ### Dashboard preview
 
 <img src="dashboard_screenshot_v2.png" alt="MNIST diffusion dashboard preview" width="900" />
