@@ -123,3 +123,7 @@ ssh -N -L 8080:localhost:8080 rmaulik@gautschi.rcac.purdue.edu
 Then open:
 
 `http://localhost:8080/dashboard.html`
+
+### Dashboard preview
+
+![MNIST diffusion dashboard preview](dashboard_screenshot.png)
