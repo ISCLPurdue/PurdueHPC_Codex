@@ -82,4 +82,4 @@ Then open:
 
 ### Dashboard preview
 
-![MNIST diffusion dashboard preview](dashboard_screenshot.png)
+<img src="dashboard_screenshot_v2.png" alt="MNIST diffusion dashboard preview" width="900" />
