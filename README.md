@@ -43,6 +43,7 @@ squeue -u rmaulik
 Notes:
 - The script targets partition `ai` and requests 1 GPU with 14 CPUs (required ratio on Gautschi AI partition).
 - Generated images and checkpoints are written to `outputs/`.
+- The script now runs posterior sampling after training for partial observations (default: 50% observed pixels).
 
 ## Longer run + dashboard
 
@@ -60,6 +61,8 @@ This writes a run folder under `outputs/<run_tag>/` with:
 - `loss_curve_step.png`
 - `loss_curve_epoch.png`
 - `architecture_schematic.png`
+- `posterior_conditioning_overview.png`
+- `posterior_samples.png`
 - `loss_history.csv`
 - `metrics.json`
 
@@ -84,6 +87,16 @@ Notes:
 - `http://localhost:8080/dashboard.html` now serves a live root dashboard that always follows `outputs/LATEST_RUN.txt` and `outputs/current`.
 - The run dashboard refreshes periodically and supports click-to-zoom controls (`+`, `-`, `reset`) on images.
 - Refresh polling stops automatically when the run status becomes `completed`.
+
+## Posterior sampling options
+
+Posterior sampling is likelihood-guided and configured via:
+
+- `--posterior-digit` (default `7`)
+- `--posterior-observed-fraction` (default `0.5`)
+- `--posterior-guidance-scale` (default `1.5`)
+- `--posterior-likelihood-sigma` (default `0.1`)
+- `--num-posterior-samples` (default `8`)
 
 ### Dashboard preview
 

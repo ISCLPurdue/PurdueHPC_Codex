@@ -141,6 +141,11 @@ class DDPM:
         b = self.sqrt_one_minus_alpha_bar[t][:, None, None, None]
         return a * x0 + b * noise
 
+    def predict_x0(self, x_t: torch.Tensor, t: torch.Tensor, pred_noise: torch.Tensor) -> torch.Tensor:
+        a = self.sqrt_alpha_bar[t][:, None, None, None]
+        b = self.sqrt_one_minus_alpha_bar[t][:, None, None, None]
+        return (x_t - b * pred_noise) / a
+
     @torch.no_grad()
     def sample(self, model: nn.Module, num_samples: int, image_size: int = 28) -> torch.Tensor:
         model.eval()
@@ -154,6 +159,49 @@ class DDPM:
             alpha_bar_t = self.alpha_bar[i]
             beta_t = self.betas[i]
             mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
+
+            if i > 0:
+                z = torch.randn_like(x)
+                sigma = torch.sqrt(beta_t)
+                x = mean + sigma * z
+            else:
+                x = mean
+
+        model.train()
+        return x.clamp(-1, 1)
+
+    @torch.no_grad()
+    def posterior_sample(
+        self,
+        model: nn.Module,
+        observed_x0: torch.Tensor,
+        observed_mask: torch.Tensor,
+        num_samples: int,
+        guidance_scale: float,
+        likelihood_sigma: float,
+    ) -> torch.Tensor:
+        model.eval()
+        x = torch.randn(num_samples, 1, observed_x0.shape[-2], observed_x0.shape[-1], device=self.device)
+        y = observed_x0.expand(num_samples, -1, -1, -1)
+        m = observed_mask.expand(num_samples, -1, -1, -1)
+
+        inv_var = 1.0 / max(likelihood_sigma * likelihood_sigma, 1e-8)
+
+        for i in reversed(range(self.cfg.timesteps)):
+            t = torch.full((num_samples,), i, device=self.device, dtype=torch.long)
+            pred_noise = model(x, t)
+
+            alpha_t = self.alphas[i]
+            alpha_bar_t = self.alpha_bar[i]
+            beta_t = self.betas[i]
+
+            x0_hat = self.predict_x0(x, t, pred_noise)
+            mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
+
+            # Likelihood guidance for observed pixels under p(y|x0) ~ N(y; m*x0, sigma^2 I).
+            grad_x0 = m * (y - x0_hat) * inv_var
+            grad_xt = grad_x0 / torch.sqrt(alpha_bar_t)
+            mean = mean + guidance_scale * beta_t * grad_xt
 
             if i > 0:
                 z = torch.randn_like(x)
@@ -212,6 +260,39 @@ def save_loss_plots(step_losses: list[float], epoch_losses: list[float], outdir:
     return step_plot, epoch_plot
 
 
+def save_posterior_overview(
+    ground_truth: torch.Tensor,
+    observed_mask: torch.Tensor,
+    observed_image: torch.Tensor,
+    posterior_samples: torch.Tensor,
+    out_path: str,
+) -> None:
+    gt = ((ground_truth + 1) / 2.0).cpu().squeeze().numpy()
+    mask = observed_mask.cpu().squeeze().numpy()
+    obs = ((observed_image + 1) / 2.0).cpu().squeeze().numpy()
+    post = ((posterior_samples + 1) / 2.0).cpu().squeeze(1).numpy()
+
+    cols = 3 + post.shape[0]
+    fig, axes = plt.subplots(1, cols, figsize=(2.2 * cols, 2.8))
+    axes[0].imshow(gt, cmap="gray")
+    axes[0].set_title("Ground truth")
+    axes[1].imshow(mask, cmap="gray", vmin=0, vmax=1)
+    axes[1].set_title("Observed mask")
+    axes[2].imshow(obs, cmap="gray")
+    axes[2].set_title("Observed pixels")
+
+    for i in range(post.shape[0]):
+        axes[3 + i].imshow(post[i], cmap="gray")
+        axes[3 + i].set_title(f"Posterior {i + 1}")
+
+    for ax in axes:
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
 def save_architecture_schematic(outdir: str) -> str:
     schematic_path = os.path.join(outdir, "architecture_schematic.png")
     fig, ax = plt.subplots(figsize=(18, 10))
@@ -262,6 +343,17 @@ def write_run_dashboard(metrics_path: str, outdir: str, refresh_seconds: int) ->
     with open(metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
+    posterior_cards = ""
+    posterior_outputs = ""
+    if metrics.get("posterior_overview_image"):
+        posterior_cards = (
+            '<div class="card"><h3>Posterior conditioning overview</h3>'
+            '<img class="zoomable" src="posterior_conditioning_overview.png" alt="Posterior overview" /></div>'
+            '<div class="card"><h3>Posterior samples</h3>'
+            '<img class="zoomable" src="posterior_samples.png" alt="Posterior samples" /></div>'
+        )
+        posterior_outputs = ", <code>posterior_conditioning_overview.png</code>, <code>posterior_samples.png</code>"
+
     html = f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -299,8 +391,9 @@ def write_run_dashboard(metrics_path: str, outdir: str, refresh_seconds: int) ->
     <div class=\"card\"><h3>Step loss</h3><img class=\"zoomable\" src=\"loss_curve_step.png\" alt=\"Step loss\" /></div>
     <div class=\"card\"><h3>Epoch loss</h3><img class=\"zoomable\" src=\"loss_curve_epoch.png\" alt=\"Epoch loss\" /></div>
     <div class=\"card\"><h3>Model architecture</h3><img class=\"zoomable\" src=\"architecture_schematic.png\" alt=\"Architecture schematic\" /></div>
+    {posterior_cards}
   </div>
-  <div class=\"card\"><h3>Raw outputs</h3><p><code>metrics.json</code>, <code>loss_history.csv</code>, <code>architecture_schematic.png</code>, checkpoints per epoch.</p></div>
+  <div class=\"card\"><h3>Raw outputs</h3><p><code>metrics.json</code>, <code>loss_history.csv</code>, <code>architecture_schematic.png</code>{posterior_outputs}, checkpoints per epoch.</p></div>
 
   <div id=\"zoom-modal\" class=\"modal\">
     <div class=\"controls\">
@@ -457,6 +550,14 @@ def write_metrics(outdir: str, metrics: dict) -> str:
     return metrics_path
 
 
+def find_digit_example(dataset: datasets.MNIST, target_digit: int) -> torch.Tensor:
+    for i in range(len(dataset)):
+        img, label = dataset[i]
+        if int(label) == target_digit:
+            return img.unsqueeze(0)
+    raise RuntimeError(f"Digit {target_digit} not found in dataset")
+
+
 def train(args: argparse.Namespace) -> None:
     run_tag = args.run_tag or datetime.now(timezone.utc).strftime("mnist_ddpm_%Y%m%d_%H%M%S")
     outdir = os.path.join(args.outdir, run_tag)
@@ -568,6 +669,32 @@ def train(args: argparse.Namespace) -> None:
             write_run_dashboard(metrics_path=metrics_path, outdir=outdir, refresh_seconds=args.dashboard_refresh_seconds)
             print(f"Epoch {epoch + 1} mean loss: {mean_epoch_loss:.6f}")
 
+    posterior_overview_name = None
+    posterior_samples_name = None
+    if args.num_posterior_samples > 0:
+        generator = torch.Generator(device=device)
+        generator.manual_seed(args.posterior_seed)
+
+        gt = find_digit_example(train_ds, args.posterior_digit).to(device)
+        observed_mask = (torch.rand(gt.shape, device=device, generator=generator) < args.posterior_observed_fraction).float()
+        observed_x0 = gt * observed_mask
+
+        posterior = diffusion.posterior_sample(
+            model=model,
+            observed_x0=observed_x0,
+            observed_mask=observed_mask,
+            num_samples=args.num_posterior_samples,
+            guidance_scale=args.posterior_guidance_scale,
+            likelihood_sigma=args.posterior_likelihood_sigma,
+        )
+
+        posterior_samples_name = "posterior_samples.png"
+        posterior_overview_name = "posterior_conditioning_overview.png"
+        posterior_samples_path = os.path.join(outdir, posterior_samples_name)
+        posterior_overview_path = os.path.join(outdir, posterior_overview_name)
+        save_grid(posterior, posterior_samples_path, nrow=min(8, args.num_posterior_samples))
+        save_posterior_overview(gt, observed_mask, observed_x0, posterior, posterior_overview_path)
+
     finished = datetime.now(timezone.utc)
     final_metrics_path = os.path.join(outdir, "metrics.json")
     with open(final_metrics_path, "r", encoding="utf-8") as f:
@@ -575,6 +702,13 @@ def train(args: argparse.Namespace) -> None:
     final_metrics["status"] = "completed"
     final_metrics["finished_utc"] = finished.isoformat()
     final_metrics["elapsed_seconds"] = round(time.time() - wall_start, 2)
+    final_metrics["posterior_digit"] = args.posterior_digit if posterior_samples_name else None
+    final_metrics["posterior_observed_fraction"] = args.posterior_observed_fraction if posterior_samples_name else None
+    final_metrics["posterior_guidance_scale"] = args.posterior_guidance_scale if posterior_samples_name else None
+    final_metrics["posterior_likelihood_sigma"] = args.posterior_likelihood_sigma if posterior_samples_name else None
+    final_metrics["posterior_samples_count"] = args.num_posterior_samples if posterior_samples_name else 0
+    final_metrics["posterior_samples_image"] = posterior_samples_name
+    final_metrics["posterior_overview_image"] = posterior_overview_name
     write_metrics(outdir=outdir, metrics=final_metrics)
     write_run_dashboard(metrics_path=final_metrics_path, outdir=outdir, refresh_seconds=args.dashboard_refresh_seconds)
     write_latest_run(outputs_root=outputs_root, run_tag=run_tag)
@@ -604,6 +738,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--outdir", default="./outputs")
     p.add_argument("--run-tag", default="")
     p.add_argument("--force-cpu", action="store_true")
+    p.add_argument("--posterior-digit", type=int, default=7)
+    p.add_argument("--posterior-observed-fraction", type=float, default=0.5)
+    p.add_argument("--posterior-guidance-scale", type=float, default=1.5)
+    p.add_argument("--posterior-likelihood-sigma", type=float, default=0.1)
+    p.add_argument("--num-posterior-samples", type=int, default=8)
+    p.add_argument("--posterior-seed", type=int, default=123)
     return p
 
 
