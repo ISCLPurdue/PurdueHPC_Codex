@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a simple DDPM on MNIST and generate plots/dashboard artifacts."""
+"""Train a DDPM on MNIST and generate plots/dashboard artifacts."""
 
 import argparse
 import csv
@@ -42,38 +42,84 @@ class TimeEmbedding(nn.Module):
         return emb
 
 
-class SimpleDenoiser(nn.Module):
+def build_group_norm(channels: int) -> nn.GroupNorm:
+    groups = min(8, channels)
+    while channels % groups != 0 and groups > 1:
+        groups -= 1
+    return nn.GroupNorm(groups, channels)
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int, time_dim: int):
+        super().__init__()
+        self.norm1 = build_group_norm(in_ch)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
+        self.norm2 = build_group_norm(out_ch)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
+        self.time_proj = nn.Linear(time_dim, out_ch)
+        self.skip = nn.Conv2d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
+
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+        h = self.conv1(F.silu(self.norm1(x)))
+        h = h + self.time_proj(t_emb)[:, :, None, None]
+        h = self.conv2(F.silu(self.norm2(h)))
+        return h + self.skip(x)
+
+
+class UNetDenoiser(nn.Module):
+    """A compact U-Net style denoiser with residual blocks and time conditioning."""
+
     def __init__(self, time_dim: int = 128):
         super().__init__()
+        time_hidden = time_dim * 4
         self.time_mlp = nn.Sequential(
             TimeEmbedding(time_dim),
-            nn.Linear(time_dim, time_dim),
-            nn.ReLU(),
+            nn.Linear(time_dim, time_hidden),
+            nn.SiLU(),
+            nn.Linear(time_hidden, time_hidden),
         )
 
-        self.conv1 = nn.Conv2d(1, 32, 3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.conv3 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv4 = nn.Conv2d(64, 32, 3, padding=1)
-        self.out = nn.Conv2d(32, 1, 1)
+        self.stem = nn.Conv2d(1, 64, 3, padding=1)
 
-        self.to_scale1 = nn.Linear(time_dim, 32)
-        self.to_scale2 = nn.Linear(time_dim, 64)
-        self.to_scale3 = nn.Linear(time_dim, 64)
-        self.to_scale4 = nn.Linear(time_dim, 32)
+        self.down1 = ResidualBlock(64, 64, time_hidden)
+        self.downsample1 = nn.Conv2d(64, 128, 4, stride=2, padding=1)  # 28 -> 14
+        self.down2 = ResidualBlock(128, 128, time_hidden)
+        self.downsample2 = nn.Conv2d(128, 256, 4, stride=2, padding=1)  # 14 -> 7
 
-    def _apply_time(self, x: torch.Tensor, t_emb: torch.Tensor, proj: nn.Linear) -> torch.Tensor:
-        scale = proj(t_emb)[:, :, None, None]
-        return x + scale
+        self.mid1 = ResidualBlock(256, 256, time_hidden)
+        self.mid2 = ResidualBlock(256, 256, time_hidden)
+
+        self.up1 = nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1)  # 7 -> 14
+        self.up_block1 = ResidualBlock(256, 128, time_hidden)
+        self.up2 = nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1)  # 14 -> 28
+        self.up_block2 = ResidualBlock(128, 64, time_hidden)
+
+        self.out_norm = build_group_norm(64)
+        self.out_conv = nn.Conv2d(64, 1, 3, padding=1)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         t_emb = self.time_mlp(t)
 
-        x = F.relu(self._apply_time(self.conv1(x), t_emb, self.to_scale1))
-        x = F.relu(self._apply_time(self.conv2(x), t_emb, self.to_scale2))
-        x = F.relu(self._apply_time(self.conv3(x), t_emb, self.to_scale3))
-        x = F.relu(self._apply_time(self.conv4(x), t_emb, self.to_scale4))
-        return self.out(x)
+        h0 = self.stem(x)
+        h1 = self.down1(h0, t_emb)
+        h2 = self.downsample1(h1)
+        h3 = self.down2(h2, t_emb)
+        h4 = self.downsample2(h3)
+
+        h = self.mid1(h4, t_emb)
+        h = self.mid2(h, t_emb)
+
+        h = self.up1(h)
+        if h.shape[-2:] != h3.shape[-2:]:
+            h = F.interpolate(h, size=h3.shape[-2:], mode="nearest")
+        h = self.up_block1(torch.cat([h, h3], dim=1), t_emb)
+
+        h = self.up2(h)
+        if h.shape[-2:] != h1.shape[-2:]:
+            h = F.interpolate(h, size=h1.shape[-2:], mode="nearest")
+        h = self.up_block2(torch.cat([h, h1], dim=1), t_emb)
+
+        return self.out_conv(F.silu(self.out_norm(h)))
 
 
 class DDPM:
@@ -169,36 +215,45 @@ def save_loss_plots(step_losses: list[float], epoch_losses: list[float], outdir:
 
 def save_architecture_schematic(outdir: str) -> str:
     schematic_path = os.path.join(outdir, "architecture_schematic.png")
-    fig, ax = plt.subplots(figsize=(12, 4))
+    fig, ax = plt.subplots(figsize=(18, 10))
     ax.axis("off")
 
     blocks = [
-        (0.04, 0.35, 0.14, 0.30, "x_t\n(1x28x28)"),
-        (0.22, 0.35, 0.16, 0.30, "Conv 1->32\n+ t embedding"),
-        (0.42, 0.35, 0.16, 0.30, "Conv 32->64\n+ t embedding"),
-        (0.62, 0.35, 0.16, 0.30, "Conv 64->64\n+ t embedding"),
-        (0.82, 0.35, 0.14, 0.30, "Conv 64->32->1\npred noise"),
+        (0.02, 0.60, 0.16, 0.18, "Input x_t\\n1x28x28"),
+        (0.22, 0.60, 0.16, 0.18, "Stem Conv\\n1->64"),
+        (0.42, 0.60, 0.16, 0.18, "Down Block 1\\nRes(64)") ,
+        (0.62, 0.60, 0.16, 0.18, "Down Block 2\\nRes(128)") ,
+        (0.82, 0.60, 0.16, 0.18, "Bottleneck\\nRes(256) x2"),
+        (0.62, 0.28, 0.16, 0.18, "Up Block 1\\nRes(256->128)"),
+        (0.42, 0.28, 0.16, 0.18, "Up Block 2\\nRes(128->64)"),
+        (0.22, 0.28, 0.16, 0.18, "Output Conv\\n64->1"),
     ]
 
     for x, y, w, h, label in blocks:
-        rect = plt.Rectangle((x, y), w, h, edgecolor="#1f2937", facecolor="#e5edff", linewidth=1.5)
+        rect = plt.Rectangle((x, y), w, h, edgecolor="#1f2937", facecolor="#e5edff", linewidth=2.0)
         ax.add_patch(rect)
-        ax.text(x + w / 2, y + h / 2, label, ha="center", va="center", fontsize=10)
+        ax.text(x + w / 2, y + h / 2, label, ha="center", va="center", fontsize=14)
 
-    for i in range(len(blocks) - 1):
+    flow = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)]
+    for i, j in flow:
         x1 = blocks[i][0] + blocks[i][2]
-        x2 = blocks[i + 1][0]
-        y = 0.50
-        ax.annotate("", xy=(x2, y), xytext=(x1, y), arrowprops=dict(arrowstyle="->", lw=1.8, color="#111827"))
+        y1 = blocks[i][1] + blocks[i][3] / 2
+        x2 = blocks[j][0]
+        y2 = blocks[j][1] + blocks[j][3] / 2
+        ax.annotate("", xy=(x2, y2), xytext=(x1, y1), arrowprops=dict(arrowstyle="->", lw=2.2, color="#111827"))
 
-    ax.text(0.36, 0.82, "Sinusoidal time embedding t", ha="center", va="center", fontsize=10, color="#111827")
-    ax.annotate("", xy=(0.30, 0.65), xytext=(0.36, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
-    ax.annotate("", xy=(0.50, 0.65), xytext=(0.40, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
-    ax.annotate("", xy=(0.70, 0.65), xytext=(0.44, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
+    ax.text(0.50, 0.92, "Sinusoidal t embedding -> MLP -> injected into all residual blocks", ha="center", fontsize=15)
+    for idx in [2, 3, 4, 5, 6]:
+        bx, by, bw, bh, _ = blocks[idx]
+        ax.annotate("", xy=(bx + bw / 2, by + bh), xytext=(0.50, 0.88), arrowprops=dict(arrowstyle="->", lw=1.5, color="#374151"))
 
-    ax.set_title("MNIST DDPM Denoiser Architecture (schematic)", fontsize=13)
-    plt.tight_layout()
-    plt.savefig(schematic_path, dpi=160)
+    ax.text(0.52, 0.50, "Skip connection", fontsize=13, color="#374151")
+    ax.annotate("", xy=(0.68, 0.37), xytext=(0.50, 0.66), arrowprops=dict(arrowstyle="->", lw=1.8, linestyle="--", color="#374151"))
+    ax.annotate("", xy=(0.48, 0.37), xytext=(0.30, 0.66), arrowprops=dict(arrowstyle="->", lw=1.8, linestyle="--", color="#374151"))
+
+    ax.set_title("MNIST DDPM U-Net Denoiser Architecture (schematic)", fontsize=18)
+    plt.tight_layout(pad=2.0)
+    plt.savefig(schematic_path, dpi=220)
     plt.close(fig)
     return schematic_path
 
@@ -287,8 +342,8 @@ def train(args: argparse.Namespace) -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    model = SimpleDenoiser(time_dim=args.time_dim).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    model = UNetDenoiser(time_dim=args.time_dim).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     diffusion = DDPM(
         DiffusionConfig(timesteps=args.timesteps, beta_start=args.beta_start, beta_end=args.beta_end),
@@ -317,6 +372,7 @@ def train(args: argparse.Namespace) -> None:
                 loss = F.mse_loss(pred, noise)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 global_step += 1
@@ -377,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Train simple DDPM for MNIST")
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--timesteps", type=int, default=200)
     p.add_argument("--beta-start", type=float, default=1e-4)
     p.add_argument("--beta-end", type=float, default=2e-2)
