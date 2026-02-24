@@ -167,6 +167,42 @@ def save_loss_plots(step_losses: list[float], epoch_losses: list[float], outdir:
     return step_plot, epoch_plot
 
 
+def save_architecture_schematic(outdir: str) -> str:
+    schematic_path = os.path.join(outdir, "architecture_schematic.png")
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.axis("off")
+
+    blocks = [
+        (0.04, 0.35, 0.14, 0.30, "x_t\n(1x28x28)"),
+        (0.22, 0.35, 0.16, 0.30, "Conv 1->32\n+ t embedding"),
+        (0.42, 0.35, 0.16, 0.30, "Conv 32->64\n+ t embedding"),
+        (0.62, 0.35, 0.16, 0.30, "Conv 64->64\n+ t embedding"),
+        (0.82, 0.35, 0.14, 0.30, "Conv 64->32->1\npred noise"),
+    ]
+
+    for x, y, w, h, label in blocks:
+        rect = plt.Rectangle((x, y), w, h, edgecolor="#1f2937", facecolor="#e5edff", linewidth=1.5)
+        ax.add_patch(rect)
+        ax.text(x + w / 2, y + h / 2, label, ha="center", va="center", fontsize=10)
+
+    for i in range(len(blocks) - 1):
+        x1 = blocks[i][0] + blocks[i][2]
+        x2 = blocks[i + 1][0]
+        y = 0.50
+        ax.annotate("", xy=(x2, y), xytext=(x1, y), arrowprops=dict(arrowstyle="->", lw=1.8, color="#111827"))
+
+    ax.text(0.36, 0.82, "Sinusoidal time embedding t", ha="center", va="center", fontsize=10, color="#111827")
+    ax.annotate("", xy=(0.30, 0.65), xytext=(0.36, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
+    ax.annotate("", xy=(0.50, 0.65), xytext=(0.40, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
+    ax.annotate("", xy=(0.70, 0.65), xytext=(0.44, 0.78), arrowprops=dict(arrowstyle="->", lw=1.2, color="#374151"))
+
+    ax.set_title("MNIST DDPM Denoiser Architecture (schematic)", fontsize=13)
+    plt.tight_layout()
+    plt.savefig(schematic_path, dpi=160)
+    plt.close(fig)
+    return schematic_path
+
+
 def write_dashboard(metrics_path: str, outdir: str) -> str:
     dashboard_path = os.path.join(outdir, "dashboard.html")
     with open(metrics_path, "r", encoding="utf-8") as f:
@@ -210,10 +246,14 @@ def write_dashboard(metrics_path: str, outdir: str) -> str:
       <h3>Epoch loss</h3>
       <img src=\"loss_curve_epoch.png\" alt=\"Epoch loss\" />
     </div>
+    <div class=\"card\">
+      <h3>Model architecture</h3>
+      <img src=\"architecture_schematic.png\" alt=\"Architecture schematic\" />
+    </div>
   </div>
   <div class=\"card\">
     <h3>Raw outputs</h3>
-    <p><code>metrics.json</code>, <code>loss_history.csv</code>, checkpoints per epoch.</p>
+    <p><code>metrics.json</code>, <code>loss_history.csv</code>, <code>architecture_schematic.png</code>, checkpoints per epoch.</p>
   </div>
 </body>
 </html>
@@ -298,6 +338,7 @@ def train(args: argparse.Namespace) -> None:
     save_grid(samples, sample_img_path)
 
     step_plot, epoch_plot = save_loss_plots(step_losses=step_losses, epoch_losses=epoch_losses, outdir=outdir)
+    architecture_plot = save_architecture_schematic(outdir=outdir)
 
     finished = datetime.now(timezone.utc)
     metrics = {
@@ -313,6 +354,7 @@ def train(args: argparse.Namespace) -> None:
         "sample_image": os.path.basename(sample_img_path),
         "step_loss_plot": os.path.basename(step_plot),
         "epoch_loss_plot": os.path.basename(epoch_plot),
+        "architecture_schematic": os.path.basename(architecture_plot),
         "loss_csv": os.path.basename(csv_path),
     }
 

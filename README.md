@@ -104,6 +104,7 @@ This writes a run folder under `outputs/<run_tag>/` with:
 - `mnist_samples.png`
 - `loss_curve_step.png`
 - `loss_curve_epoch.png`
+- `architecture_schematic.png`
 - `loss_history.csv`
 - `metrics.json`
 
