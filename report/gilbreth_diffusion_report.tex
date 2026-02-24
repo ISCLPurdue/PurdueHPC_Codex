@@ -1,0 +1,158 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{longtable}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\title{Technical Report: MNIST Diffusion Migration to Purdue Gilbreth}
+\author{PurdueHPC\_Codex Workflow}
+\date{February 24, 2026}
+
+\begin{document}
+\maketitle
+
+\section{Scope and Environment}
+This report captures migration of the MNIST DDPM training workflow from Gautschi to Gilbreth, including cluster policy adjustments and Slurm validation steps.
+
+All work in this branch targets:
+\begin{itemize}
+  \item Scratch workspace: \texttt{/scratch/gilbreth/rmaulik/codex\_test}
+  \item Source repository: \texttt{PurdueHPC\_Codex} (branch \texttt{codex/gilbreth-diffusion})
+  \item Account: \texttt{rmaulik}
+  \item Primary partition target: \texttt{a100-40gb}
+\end{itemize}
+
+\section{Cluster Discovery and Policy Findings}
+Live Gilbreth inspection used:
+\begin{itemize}
+  \item \texttt{slist}
+  \item \texttt{sfeatures}
+  \item \texttt{sinfo -s}
+  \item \texttt{scontrol show partition}
+\end{itemize}
+
+Observed key finding for submission policy:
+\begin{itemize}
+  \item Gilbreth requires explicit memory in batch submissions.
+\end{itemize}
+
+Initial submission error (before adding memory):
+\begin{verbatim}
+sbatch: error: Gilbreth requires you to explicitly request the amount
+of memory you are requesting for your job.
+sbatch: error: If you don't know your memory requirements,
+a good default option in this partition is: --mem=240G per GPU
+\end{verbatim}
+
+Branch scripts were updated accordingly with \texttt{\#SBATCH --mem=240G}.
+
+\section{Diffusion Training Pipeline}
+The training stack and objective are unchanged from Gautschi:
+\begin{itemize}
+  \item DDPM noise-prediction objective on MNIST
+  \item Residual U-Net denoiser with sinusoidal time embeddings
+  \item AdamW optimization + gradient clipping
+  \item Run artifacts: samples, step/epoch loss plots, checkpoints, metrics JSON, and HTML dashboard
+\end{itemize}
+
+\section{Gilbreth Slurm Configuration in This Branch}
+Primary short-run script:
+\begin{itemize}
+  \item \texttt{submit\_mnist\_diffusion\_gilbreth.slurm}
+  \item \texttt{-p a100-40gb}
+  \item \texttt{--gres=gpu:1}
+  \item \texttt{--cpus-per-task=8}
+  \item \texttt{--mem=240G}
+\end{itemize}
+
+Long-run script:
+\begin{itemize}
+  \item \texttt{submit\_mnist\_diffusion\_gilbreth\_long.slurm}
+  \item 80 epochs, 300 diffusion steps, same resource policy
+\end{itemize}
+
+\section{Validation and Completed Run on Gilbreth (Feb 24, 2026)}
+\begin{longtable}{l l l l}
+\toprule
+Job ID & Partition & State & Notes \\
+\midrule
+10330727 & a100-40gb & PENDING & Earlier queue attempt after adding \texttt{--mem} \\
+10330735 & a30 & PENDING & Alternate queue test; pending reason \texttt{AssocGrpGRES} \\
+10330760 & a100-40gb & COMPLETED & Final validated run on target partition \\
+\bottomrule
+\end{longtable}
+
+Completed run details from \texttt{sacct} and \texttt{metrics.json}:
+\begin{itemize}
+  \item Slurm elapsed: \texttt{00:03:41}
+  \item Slurm state / exit code: \texttt{COMPLETED}, \texttt{0:0}
+  \item Run tag: \texttt{gilbreth\_10330760}
+  \item Device: \texttt{cuda}
+  \item Total training steps: \texttt{2345}
+  \item Final epoch mean loss: \texttt{0.048376138451129896}
+  \item Best epoch mean loss: \texttt{0.048376138451129896}
+\end{itemize}
+
+\section{Dashboard and Artifacts}
+The completed run produced:
+\begin{itemize}
+  \item \texttt{outputs/gilbreth\_10330760/dashboard.html}
+  \item \texttt{outputs/gilbreth\_10330760/mnist\_samples.png}
+  \item \texttt{outputs/gilbreth\_10330760/loss\_curve\_step.png}
+  \item \texttt{outputs/gilbreth\_10330760/loss\_curve\_epoch.png}
+  \item \texttt{outputs/gilbreth\_10330760/metrics.json}
+\end{itemize}
+
+The root live dashboard remained at:
+\begin{itemize}
+  \item \texttt{outputs/dashboard.html}
+\end{itemize}
+and followed the latest run through \texttt{outputs/LATEST\_RUN.txt = gilbreth\_10330760}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.72\textwidth]{report/assets/gilbreth_10330760/mnist_samples.png}
+\caption{Generated MNIST samples from Gilbreth run \texttt{gilbreth\_10330760}.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{report/assets/gilbreth_10330760/loss_curve_step.png}
+\caption{Per-step training loss on Gilbreth run \texttt{gilbreth\_10330760}.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{report/assets/gilbreth_10330760/loss_curve_epoch.png}
+\caption{Per-epoch mean loss on Gilbreth run \texttt{gilbreth\_10330760}.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{report/assets/gilbreth_10330760/architecture_schematic.png}
+\caption{U-Net denoiser architecture schematic generated during the Gilbreth run.}
+\end{figure}
+
+\section{Branch Artifacts Updated}
+\begin{itemize}
+  \item \texttt{README.md}
+  \item \texttt{SKILL.md}
+  \item \texttt{serve\_dashboard.sh}
+  \item \texttt{submit\_mnist\_diffusion\_gilbreth.slurm}
+  \item \texttt{submit\_mnist\_diffusion\_gilbreth\_long.slurm}
+  \item \texttt{report/gilbreth\_diffusion\_report.tex}
+\end{itemize}
+
+\section{Re-run Command}
+To repeat the validated short run:
+\begin{verbatim}
+cd /scratch/gilbreth/rmaulik/codex_test/PurdueHPC_Codex
+sbatch submit_mnist_diffusion_gilbreth.slurm
+\end{verbatim}
+
+\end{document}

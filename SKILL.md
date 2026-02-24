@@ -1,6 +1,6 @@
-# Purdue HPC (Gautschi + Gilbreth) Codex Skill
+# Purdue HPC (Gilbreth) Codex Skill
 
-Use this skill when Codex needs to run experiments, prepare jobs, and manage files on Purdue RCAC clusters (`gautschi`, `gilbreth`) while keeping reproducible scripts in this repository.
+Use this skill when Codex needs to run experiments, prepare jobs, and manage files on Purdue RCAC Gilbreth while keeping reproducible scripts in this repository.
 
 ## Goal
 
@@ -15,13 +15,7 @@ Use this skill when Codex needs to run experiments, prepare jobs, and manage fil
 - You have this repo checked out locally:
   - `/Users/rmaulik/Desktop/Codex_Stuff/PurdueHPC_Codex`
 
-## Cluster login patterns
-
-Gautschi:
-
-```bash
-ssh <username>@gautschi.rcac.purdue.edu
-```
+## Cluster login pattern
 
 Gilbreth:
 
@@ -43,11 +37,11 @@ Do not run experiments from `$HOME`.
 - Use scratch for active jobs and temporary outputs.
 - Use depot for larger persistent group/project data.
 
-Example on Gautschi:
+Example:
 
 ```bash
-echo "$SCRATCH"
-mkdir -p "$SCRATCH/codex_test"
+echo "$CLUSTER_SCRATCH"
+mkdir -p "$CLUSTER_SCRATCH/codex_test"
 ```
 
 ## Repo-to-cluster workflow
@@ -60,7 +54,7 @@ mkdir -p "$SCRATCH/codex_test"
 ## Python environment pattern (cluster side)
 
 ```bash
-cd /scratch/<cluster>/<username>/codex_test
+cd "$CLUSTER_SCRATCH/codex_test"
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -72,7 +66,7 @@ python -m pip install -r requirements.txt
 Submit:
 
 ```bash
-sbatch submit_mnist_diffusion.slurm
+sbatch submit_mnist_diffusion_gilbreth.slurm
 ```
 
 Monitor running/pending jobs:
@@ -93,24 +87,30 @@ Inspect output:
 tail -n 100 slurm-<jobid>.out
 ```
 
-## Gautschi-specific Slurm notes
+## Gilbreth-specific Slurm notes
 
-- Partition must be explicitly set (for example `#SBATCH -p ai`).
-- AI partition enforces CPU/GPU proportional requests; use 14 CPUs per 1 GPU.
-- If submission fails, read `sbatch` error text and adjust directives first.
+Validated on Gilbreth with:
 
-## Current validated experiment in this repo
+- Partition: `a100-40gb`
+- GPU request: `--gres=gpu:1`
+- CPU request: `--cpus-per-task=8`
+- Memory request: `--mem=240G` (required by Gilbreth for submission)
+
+Useful checks:
+
+```bash
+sinfo -s
+sfeatures
+```
+
+If jobs remain pending with reason `AssocGrpGRES`, wait for active account GPU jobs to clear or submit to a different partition permitted by your allocation.
+
+## Current validated experiment scripts in this repo
 
 - `mnist_diffusion.py`
-- `submit_mnist_diffusion.slurm`
+- `submit_mnist_diffusion_gilbreth.slurm`
+- `submit_mnist_diffusion_gilbreth_long.slurm`
 - `requirements.txt`
-
-Validated run on Gautschi:
-
-- Job ID: `8109439`
-- State: `COMPLETED`
-- Exit code: `0:0`
-- Output artifact: `outputs/mnist_samples.png`
 
 ## Safety rules for Codex actions
 
@@ -118,4 +118,3 @@ Validated run on Gautschi:
 - Do not commit full raw logs unless explicitly requested.
 - Prefer adding concise output tails/summaries to `README.md`.
 - Keep scratch paths user-specific and explicit in scripts.
-
