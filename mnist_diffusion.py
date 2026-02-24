@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Train a simple DDPM on MNIST and sample generated digits."""
+"""Train a simple DDPM on MNIST and generate plots/dashboard artifacts."""
 
 import argparse
+import csv
+import json
 import math
 import os
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import matplotlib.pyplot as plt
 import torch
@@ -136,9 +140,98 @@ def save_grid(images: torch.Tensor, out_path: str, nrow: int = 8) -> None:
     plt.close(fig)
 
 
+def save_loss_plots(step_losses: list[float], epoch_losses: list[float], outdir: str) -> tuple[str, str]:
+    step_plot = os.path.join(outdir, "loss_curve_step.png")
+    epoch_plot = os.path.join(outdir, "loss_curve_epoch.png")
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(range(1, len(step_losses) + 1), step_losses, linewidth=1.0)
+    plt.title("Training loss per step")
+    plt.xlabel("Step")
+    plt.ylabel("MSE loss")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(step_plot, dpi=160)
+    plt.close()
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(range(1, len(epoch_losses) + 1), epoch_losses, marker="o", linewidth=1.5)
+    plt.title("Mean training loss per epoch")
+    plt.xlabel("Epoch")
+    plt.ylabel("Mean MSE loss")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(epoch_plot, dpi=160)
+    plt.close()
+
+    return step_plot, epoch_plot
+
+
+def write_dashboard(metrics_path: str, outdir: str) -> str:
+    dashboard_path = os.path.join(outdir, "dashboard.html")
+    with open(metrics_path, "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+
+    html = f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>MNIST Diffusion Dashboard</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; margin: 2rem; background: #f5f7fb; color: #111827; }}
+    .card {{ background: #fff; border-radius: 12px; padding: 1rem 1.25rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 1rem; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }}
+    img {{ max-width: 100%; border-radius: 8px; border: 1px solid #e5e7eb; }}
+    code {{ background: #eef2ff; padding: 0.15rem 0.35rem; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <h1>MNIST Diffusion Dashboard</h1>
+  <div class=\"card\">
+    <p><strong>Run tag:</strong> {metrics['run_tag']}</p>
+    <p><strong>Started (UTC):</strong> {metrics['started_utc']}</p>
+    <p><strong>Finished (UTC):</strong> {metrics['finished_utc']}</p>
+    <p><strong>Device:</strong> {metrics['device']}</p>
+    <p><strong>Total steps:</strong> {metrics['total_steps']}</p>
+    <p><strong>Final epoch mean loss:</strong> {metrics['final_epoch_loss']:.6f}</p>
+    <p><strong>Best epoch mean loss:</strong> {metrics['best_epoch_loss']:.6f}</p>
+  </div>
+  <div class=\"grid\">
+    <div class=\"card\">
+      <h3>Generated samples</h3>
+      <img src=\"mnist_samples.png\" alt=\"MNIST samples\" />
+    </div>
+    <div class=\"card\">
+      <h3>Step loss</h3>
+      <img src=\"loss_curve_step.png\" alt=\"Step loss\" />
+    </div>
+    <div class=\"card\">
+      <h3>Epoch loss</h3>
+      <img src=\"loss_curve_epoch.png\" alt=\"Epoch loss\" />
+    </div>
+  </div>
+  <div class=\"card\">
+    <h3>Raw outputs</h3>
+    <p><code>metrics.json</code>, <code>loss_history.csv</code>, checkpoints per epoch.</p>
+  </div>
+</body>
+</html>
+"""
+    with open(dashboard_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return dashboard_path
+
+
 def train(args: argparse.Namespace) -> None:
+    run_tag = args.run_tag or datetime.now(timezone.utc).strftime("mnist_ddpm_%Y%m%d_%H%M%S")
+    outdir = os.path.join(args.outdir, run_tag)
+    os.makedirs(outdir, exist_ok=True)
+
+    started = datetime.now(timezone.utc)
+    wall_start = time.time()
+
     device = torch.device("cuda" if torch.cuda.is_available() and not args.force_cpu else "cpu")
-    os.makedirs(args.outdir, exist_ok=True)
 
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -146,7 +239,13 @@ def train(args: argparse.Namespace) -> None:
     ])
 
     train_ds = datasets.MNIST(root=args.data_dir, train=True, download=True, transform=transform)
-    loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=(device.type == "cuda"))
+    loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
 
     model = SimpleDenoiser(time_dim=args.time_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -156,31 +255,80 @@ def train(args: argparse.Namespace) -> None:
         device=device,
     )
 
-    global_step = 0
-    for epoch in range(args.epochs):
-        pbar = tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}")
-        for x0, _ in pbar:
-            x0 = x0.to(device)
-            t = torch.randint(0, args.timesteps, (x0.shape[0],), device=device)
-            noise = torch.randn_like(x0)
-            xt = diffusion.q_sample(x0, t, noise)
-            pred = model(xt, t)
+    step_losses: list[float] = []
+    epoch_losses: list[float] = []
+    csv_path = os.path.join(outdir, "loss_history.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_f:
+        writer = csv.writer(csv_f)
+        writer.writerow(["step", "epoch", "loss"])
 
-            loss = F.mse_loss(pred, noise)
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+        global_step = 0
+        for epoch in range(args.epochs):
+            pbar = tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}")
+            running_loss = 0.0
+            epoch_steps = 0
+            for x0, _ in pbar:
+                x0 = x0.to(device)
+                t = torch.randint(0, args.timesteps, (x0.shape[0],), device=device)
+                noise = torch.randn_like(x0)
+                xt = diffusion.q_sample(x0, t, noise)
+                pred = model(xt, t)
 
-            global_step += 1
-            pbar.set_postfix(loss=f"{loss.item():.4f}", step=global_step)
+                loss = F.mse_loss(pred, noise)
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
 
-        ckpt = os.path.join(args.outdir, f"mnist_ddpm_epoch_{epoch + 1}.pt")
-        torch.save({"model": model.state_dict(), "epoch": epoch + 1, "args": vars(args)}, ckpt)
+                global_step += 1
+                epoch_steps += 1
+                loss_value = float(loss.item())
+                running_loss += loss_value
+                step_losses.append(loss_value)
+                writer.writerow([global_step, epoch + 1, f"{loss_value:.8f}"])
+                pbar.set_postfix(loss=f"{loss_value:.4f}", step=global_step)
+
+            mean_epoch_loss = running_loss / max(epoch_steps, 1)
+            epoch_losses.append(mean_epoch_loss)
+            ckpt = os.path.join(outdir, f"mnist_ddpm_epoch_{epoch + 1}.pt")
+            torch.save({"model": model.state_dict(), "epoch": epoch + 1, "args": vars(args)}, ckpt)
+            print(f"Epoch {epoch + 1} mean loss: {mean_epoch_loss:.6f}")
 
     samples = diffusion.sample(model, num_samples=args.num_samples)
-    out_img = os.path.join(args.outdir, "mnist_samples.png")
-    save_grid(samples, out_img)
-    print(f"Training complete on {device}. Saved samples to {out_img}")
+    sample_img_path = os.path.join(outdir, "mnist_samples.png")
+    save_grid(samples, sample_img_path)
+
+    step_plot, epoch_plot = save_loss_plots(step_losses=step_losses, epoch_losses=epoch_losses, outdir=outdir)
+
+    finished = datetime.now(timezone.utc)
+    metrics = {
+        "run_tag": run_tag,
+        "started_utc": started.isoformat(),
+        "finished_utc": finished.isoformat(),
+        "elapsed_seconds": round(time.time() - wall_start, 2),
+        "device": str(device),
+        "total_steps": len(step_losses),
+        "epochs": args.epochs,
+        "final_epoch_loss": float(epoch_losses[-1]) if epoch_losses else None,
+        "best_epoch_loss": float(min(epoch_losses)) if epoch_losses else None,
+        "sample_image": os.path.basename(sample_img_path),
+        "step_loss_plot": os.path.basename(step_plot),
+        "epoch_loss_plot": os.path.basename(epoch_plot),
+        "loss_csv": os.path.basename(csv_path),
+    }
+
+    metrics_path = os.path.join(outdir, "metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+    dashboard_path = write_dashboard(metrics_path=metrics_path, outdir=outdir)
+
+    latest_path = os.path.join(args.outdir, "LATEST_RUN.txt")
+    with open(latest_path, "w", encoding="utf-8") as f:
+        f.write(run_tag + "\n")
+
+    print(f"Training complete on {device}")
+    print(f"Run output directory: {outdir}")
+    print(f"Dashboard: {dashboard_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -196,6 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-samples", type=int, default=64)
     p.add_argument("--data-dir", default="./data")
     p.add_argument("--outdir", default="./outputs")
+    p.add_argument("--run-tag", default="")
     p.add_argument("--force-cpu", action="store_true")
     return p
 

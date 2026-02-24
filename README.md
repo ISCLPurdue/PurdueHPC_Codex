@@ -88,3 +88,38 @@ epoch 5/5:  95%|█████████▍| 444/469 [00:01<00:00, 308.05it/s
 epoch 5/5: 100%|██████████| 469/469 [00:01<00:00, 284.89it/s, loss=0.0595, step=2345]
 Training complete on cuda. Saved samples to outputs/mnist_samples.png
 ```
+
+## Longer run + dashboard
+
+Submit a longer run:
+
+```bash
+cd /scratch/gautschi/rmaulik/codex_test
+sbatch submit_mnist_diffusion_long.slurm
+```
+
+This writes a run folder under `outputs/<run_tag>/` with:
+
+- `dashboard.html`
+- `mnist_samples.png`
+- `loss_curve_step.png`
+- `loss_curve_epoch.png`
+- `loss_history.csv`
+- `metrics.json`
+
+Serve the latest run on Gautschi:
+
+```bash
+cd /scratch/gautschi/rmaulik/codex_test
+./serve_dashboard.sh
+```
+
+From your local machine, open an SSH tunnel and browse:
+
+```bash
+ssh -N -L 8080:localhost:8080 rmaulik@gautschi.rcac.purdue.edu
+```
+
+Then open:
+
+`http://localhost:8080/dashboard.html`
