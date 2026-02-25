@@ -95,8 +95,17 @@ Posterior sampling is likelihood-guided and configured via:
 - `--posterior-digit` (default `7`)
 - `--posterior-observed-fraction` (default `0.7`)
 - `--posterior-guidance-scale` (default `1.5`)
+- `--posterior-guidance-min-frac` (default `0.25`, low-noise-end guidance floor as a fraction of full scale)
+- `--posterior-guidance-power` (default `1.5`, annealing exponent for timestep-dependent guidance)
 - `--posterior-likelihood-sigma` (default `0.1`)
+- `--posterior-noise-aware-coeff` (default `0.05`, adds timestep noise term to effective likelihood variance)
+- `--posterior-disable-hard-consistency` (if set, disables projection/data-consistency on observed pixels)
 - `--num-posterior-samples` (default `8`)
+
+Current posterior sampler improvements:
+- Noise-aware likelihood variance scheduling with timestep-dependent effective sigma.
+- Guidance annealing across denoising steps.
+- Hard data-consistency projection on observed pixels during reverse sampling.
 
 ### Dashboard preview
 

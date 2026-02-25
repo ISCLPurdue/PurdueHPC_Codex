@@ -179,13 +179,18 @@ class DDPM:
         num_samples: int,
         guidance_scale: float,
         likelihood_sigma: float,
+        guidance_min_frac: float,
+        guidance_power: float,
+        noise_aware_coeff: float,
+        hard_data_consistency: bool,
     ) -> torch.Tensor:
         model.eval()
         x = torch.randn(num_samples, 1, observed_x0.shape[-2], observed_x0.shape[-1], device=self.device)
         y = observed_x0.expand(num_samples, -1, -1, -1)
         m = observed_mask.expand(num_samples, -1, -1, -1)
-
-        inv_var = 1.0 / max(likelihood_sigma * likelihood_sigma, 1e-8)
+        observed_frac = float(torch.clamp(m.mean(), min=1e-6).item())
+        base_sigma_sq = max(likelihood_sigma * likelihood_sigma, 1e-8)
+        total_steps = max(self.cfg.timesteps - 1, 1)
 
         for i in reversed(range(self.cfg.timesteps)):
             t = torch.full((num_samples,), i, device=self.device, dtype=torch.long)
@@ -196,19 +201,37 @@ class DDPM:
             beta_t = self.betas[i]
 
             x0_hat = self.predict_x0(x, t, pred_noise)
+            # Data-consistency projection in x0-space enforces observed pixels exactly.
+            if hard_data_consistency:
+                x0_hat = m * y + (1.0 - m) * x0_hat
+                pred_noise = (x - torch.sqrt(alpha_bar_t) * x0_hat) / torch.sqrt(torch.clamp(1.0 - alpha_bar_t, min=1e-8))
+
             mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
 
-            # Likelihood guidance for observed pixels under p(y|x0) ~ N(y; m*x0, sigma^2 I).
-            grad_x0 = m * (y - x0_hat) * inv_var
+            # Noise-aware masked likelihood: sigma_t^2 = sigma_y^2 + c * (1 - alpha_bar_t).
+            sigma_eff_sq = base_sigma_sq + noise_aware_coeff * float((1.0 - alpha_bar_t).item())
+            inv_var = 1.0 / max(sigma_eff_sq, 1e-8)
+            grad_x0 = (m * (y - x0_hat) * inv_var) / observed_frac
             grad_xt = grad_x0 / torch.sqrt(alpha_bar_t)
-            mean = mean + guidance_scale * beta_t * grad_xt
+
+            # Annealed guidance: weaker in high-noise steps, stronger near final denoise steps.
+            progress = 1.0 - (i / total_steps)
+            guide_factor = guidance_min_frac + (1.0 - guidance_min_frac) * (progress**guidance_power)
+            step_guidance = guidance_scale * guide_factor
+            mean = mean + step_guidance * beta_t * grad_xt
 
             if i > 0:
                 z = torch.randn_like(x)
                 sigma = torch.sqrt(beta_t)
                 x = mean + sigma * z
+                if hard_data_consistency:
+                    alpha_bar_prev = self.alpha_bar[i - 1]
+                    x_obs = torch.sqrt(alpha_bar_prev) * y + torch.sqrt(1.0 - alpha_bar_prev) * torch.randn_like(x)
+                    x = m * x_obs + (1.0 - m) * x
             else:
                 x = mean
+                if hard_data_consistency:
+                    x = m * y + (1.0 - m) * x
 
         model.train()
         return x.clamp(-1, 1)
@@ -686,6 +709,10 @@ def train(args: argparse.Namespace) -> None:
             num_samples=args.num_posterior_samples,
             guidance_scale=args.posterior_guidance_scale,
             likelihood_sigma=args.posterior_likelihood_sigma,
+            guidance_min_frac=args.posterior_guidance_min_frac,
+            guidance_power=args.posterior_guidance_power,
+            noise_aware_coeff=args.posterior_noise_aware_coeff,
+            hard_data_consistency=(not args.posterior_disable_hard_consistency),
         )
 
         posterior_samples_name = "posterior_samples.png"
@@ -706,6 +733,10 @@ def train(args: argparse.Namespace) -> None:
     final_metrics["posterior_observed_fraction"] = args.posterior_observed_fraction if posterior_samples_name else None
     final_metrics["posterior_guidance_scale"] = args.posterior_guidance_scale if posterior_samples_name else None
     final_metrics["posterior_likelihood_sigma"] = args.posterior_likelihood_sigma if posterior_samples_name else None
+    final_metrics["posterior_guidance_min_frac"] = args.posterior_guidance_min_frac if posterior_samples_name else None
+    final_metrics["posterior_guidance_power"] = args.posterior_guidance_power if posterior_samples_name else None
+    final_metrics["posterior_noise_aware_coeff"] = args.posterior_noise_aware_coeff if posterior_samples_name else None
+    final_metrics["posterior_hard_data_consistency"] = (not args.posterior_disable_hard_consistency) if posterior_samples_name else None
     final_metrics["posterior_samples_count"] = args.num_posterior_samples if posterior_samples_name else 0
     final_metrics["posterior_samples_image"] = posterior_samples_name
     final_metrics["posterior_overview_image"] = posterior_overview_name
@@ -741,7 +772,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--posterior-digit", type=int, default=7)
     p.add_argument("--posterior-observed-fraction", type=float, default=0.7)
     p.add_argument("--posterior-guidance-scale", type=float, default=1.5)
+    p.add_argument("--posterior-guidance-min-frac", type=float, default=0.25)
+    p.add_argument("--posterior-guidance-power", type=float, default=1.5)
     p.add_argument("--posterior-likelihood-sigma", type=float, default=0.1)
+    p.add_argument("--posterior-noise-aware-coeff", type=float, default=0.05)
+    p.add_argument("--posterior-disable-hard-consistency", action="store_true")
     p.add_argument("--num-posterior-samples", type=int, default=8)
     p.add_argument("--posterior-seed", type=int, default=123)
     return p

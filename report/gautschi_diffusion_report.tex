@@ -130,32 +130,41 @@ From \texttt{metrics.json} (run \texttt{long\_8109577}):
 \end{figure}
 
 \section{Posterior Sampling with Partial Observations}
-We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.py} that performs likelihood-guided reverse diffusion under partial pixel observations. For this experiment:
+We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.py} that performs likelihood-guided reverse diffusion under partial pixel observations. The latest implementation includes:
+\begin{itemize}
+  \item Noise-aware likelihood variance: $\sigma_t^2 = \sigma_y^2 + c(1-\bar{\alpha}_t)$
+  \item Annealed guidance schedule: weak guidance at high noise, stronger guidance near final denoise steps
+  \item Data-consistency projection on observed pixels (in both $\hat{x}_0$ and sampled states)
+\end{itemize}
+
+For this experiment:
 \begin{itemize}
   \item Observed fraction: 70\% of pixels (30\% occluded, random mask)
   \item Target digit class: 7
   \item Guidance scale: 1.5
+  \item Guidance min fraction / power: 0.25 / 1.5
   \item Likelihood noise scale: 0.1
+  \item Noise-aware coefficient: 0.05
 \end{itemize}
 
 Validated Gautschi posterior job:
 \begin{itemize}
-  \item Job ID: \texttt{8112300}
+  \item Job ID: \texttt{8112324}
   \item State: \texttt{COMPLETED}, exit code \texttt{0:0}
-  \item Elapsed: \texttt{00:00:28}
-  \item Run tag: \texttt{posterior\_70pct\_8112300}
+  \item Elapsed: \texttt{00:00:27}
+  \item Run tag: \texttt{posterior\_70pct\_dpsplus\_8112324}
 \end{itemize}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{report/assets/gautschi_posterior_70pct/posterior_conditioning_overview.png}
-\caption{Posterior conditioning setup: ground truth, observed mask (70\% observed), observed pixels, and posterior draws.}
+\includegraphics[width=0.95\textwidth]{report/assets/gautschi_posterior_70pct_dpsplus/posterior_conditioning_overview.png}
+\caption{Improved DPS conditioning setup: ground truth, observed mask (70\% observed), observed pixels, and posterior draws.}
 \end{figure}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_70pct/posterior_samples.png}
-\caption{Likelihood-guided posterior samples for the partially observed digit.}
+\includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_70pct_dpsplus/posterior_samples.png}
+\caption{Posterior samples with noise-aware likelihood, guidance annealing, and projection-based data consistency.}
 \end{figure}
 
 \section{Live Dashboard Operation}
