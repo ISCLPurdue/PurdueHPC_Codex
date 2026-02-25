@@ -739,7 +739,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-tag", default="")
     p.add_argument("--force-cpu", action="store_true")
     p.add_argument("--posterior-digit", type=int, default=7)
-    p.add_argument("--posterior-observed-fraction", type=float, default=0.5)
+    p.add_argument("--posterior-observed-fraction", type=float, default=0.2)
     p.add_argument("--posterior-guidance-scale", type=float, default=1.5)
     p.add_argument("--posterior-likelihood-sigma", type=float, default=0.1)
     p.add_argument("--num-posterior-samples", type=int, default=8)

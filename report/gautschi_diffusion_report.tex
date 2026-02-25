@@ -132,7 +132,7 @@ From \texttt{metrics.json} (run \texttt{long\_8109577}):
 \section{Posterior Sampling with Partial Observations}
 We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.py} that performs likelihood-guided reverse diffusion under partial pixel observations. For this experiment:
 \begin{itemize}
-  \item Observed fraction: 50\% of pixels (random mask)
+  \item Observed fraction: 20\% of pixels (80\% occluded, random mask)
   \item Target digit class: 7
   \item Guidance scale: 1.5
   \item Likelihood noise scale: 0.1
@@ -140,21 +140,21 @@ We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.
 
 Validated Gautschi posterior job:
 \begin{itemize}
-  \item Job ID: \texttt{8110850}
+  \item Job ID: \texttt{8112293}
   \item State: \texttt{COMPLETED}, exit code \texttt{0:0}
-  \item Elapsed: \texttt{00:00:28}
-  \item Run tag: \texttt{posterior\_50pct\_8110850}
+  \item Elapsed: \texttt{00:00:29}
+  \item Run tag: \texttt{posterior\_20pct\_8112293}
 \end{itemize}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{report/assets/gautschi_posterior_50pct/posterior_conditioning_overview.png}
-\caption{Posterior conditioning setup: ground truth, observed mask (50\%), observed pixels, and posterior draws.}
+\includegraphics[width=0.95\textwidth]{report/assets/gautschi_posterior_20pct/posterior_conditioning_overview.png}
+\caption{Posterior conditioning setup: ground truth, observed mask (20\% observed), observed pixels, and posterior draws.}
 \end{figure}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_50pct/posterior_samples.png}
+\includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_20pct/posterior_samples.png}
 \caption{Likelihood-guided posterior samples for the partially observed digit.}
 \end{figure}
 
