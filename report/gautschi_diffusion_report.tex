@@ -130,14 +130,50 @@ From \texttt{metrics.json} (run \texttt{long\_8109577}):
 \end{figure}
 
 \section{Posterior Sampling with Partial Observations}
-We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.py} that performs likelihood-guided reverse diffusion under partial pixel observations. The latest implementation includes:
+We added a post-training posterior sampling routine to \texttt{mnist\_diffusion.py} that performs likelihood-guided reverse diffusion under partial pixel observations. Let $y$ denote observed pixels, $m \in \{0,1\}^{H\times W}$ the mask, and $\hat{x}_0(x_t,t)$ the model-implied clean image estimate.
+
+\subsection*{Mathematical Formulation}
+At each reverse step, the baseline DDPM mean is:
+\[
+\mu_\theta(x_t,t)=\frac{1}{\sqrt{\alpha_t}}\left(x_t-\frac{1-\alpha_t}{\sqrt{1-\bar{\alpha}_t}}\epsilon_\theta(x_t,t)\right).
+\]
+
+Posterior guidance is applied through a masked Gaussian likelihood:
+\[
+p(y \mid x_0) \propto \exp\left(-\frac{\|m\odot (y-x_0)\|_2^2}{2\sigma_t^2}\right), \quad
+\sigma_t^2=\sigma_y^2 + c(1-\bar{\alpha}_t).
+\]
+This yields the guidance gradient (used in code):
+\[
+g_t \approx \frac{m\odot (y-\hat{x}_0)}{\sigma_t^2\sqrt{\bar{\alpha}_t}}.
+\]
+
+The reverse mean is then updated as:
+\[
+\tilde{\mu}_t=\mu_\theta(x_t,t)+\lambda_t \beta_t g_t,
+\]
+with timestep-annealed guidance strength
+\[
+\lambda_t=\lambda_{\max}\left(\lambda_{\min} + (1-\lambda_{\min})\left(1-\frac{t}{T-1}\right)^p\right).
+\]
+
+We additionally enforce projection-based data consistency:
+\[
+\hat{x}_0 \leftarrow m\odot y + (1-m)\odot \hat{x}_0,
+\]
+and for $t>0$:
+\[
+x_{t-1} \leftarrow m\odot \left(\sqrt{\bar{\alpha}_{t-1}}y + \sqrt{1-\bar{\alpha}_{t-1}}\xi\right) + (1-m)\odot x_{t-1}.
+\]
+
+The implemented strategy therefore combines:
 \begin{itemize}
   \item Noise-aware likelihood variance: $\sigma_t^2 = \sigma_y^2 + c(1-\bar{\alpha}_t)$
   \item Annealed guidance schedule: weak guidance at high noise, stronger guidance near final denoise steps
   \item Data-consistency projection on observed pixels (in both $\hat{x}_0$ and sampled states)
 \end{itemize}
 
-For this experiment:
+\subsection*{Experiment A: 70\% Pixels Revealed}
 \begin{itemize}
   \item Observed fraction: 70\% of pixels (30\% occluded, random mask)
   \item Target digit class: 7
@@ -164,7 +200,37 @@ Validated Gautschi posterior job:
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_70pct_dpsplus/posterior_samples.png}
-\caption{Posterior samples with noise-aware likelihood, guidance annealing, and projection-based data consistency.}
+\caption{Posterior samples with noise-aware likelihood, guidance annealing, and projection-based data consistency (70\% revealed).}
+\end{figure}
+
+\subsection*{Experiment B: 20\% Pixels Revealed}
+\begin{itemize}
+  \item Observed fraction: 20\% of pixels (80\% occluded, random mask)
+  \item Target digit class: 7
+  \item Guidance scale: 1.5
+  \item Guidance min fraction / power: 0.25 / 1.5
+  \item Likelihood noise scale: 0.1
+  \item Noise-aware coefficient: 0.05
+\end{itemize}
+
+Validated Gautschi posterior job:
+\begin{itemize}
+  \item Job ID: \texttt{8112347}
+  \item State: \texttt{COMPLETED}, exit code \texttt{0:0}
+  \item Elapsed: \texttt{00:00:28}
+  \item Run tag: \texttt{posterior\_20pct\_dpsplus\_8112347}
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{report/assets/gautschi_posterior_20pct_dpsplus/posterior_conditioning_overview.png}
+\caption{Improved DPS conditioning setup: ground truth, observed mask (20\% observed), observed pixels, and posterior draws.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{report/assets/gautschi_posterior_20pct_dpsplus/posterior_samples.png}
+\caption{Posterior samples with noise-aware likelihood, guidance annealing, and projection-based data consistency (20\% revealed).}
 \end{figure}
 
 \section{Live Dashboard Operation}
