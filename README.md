@@ -43,7 +43,7 @@ squeue -u rmaulik
 Notes:
 - The script targets partition `ai` and requests 1 GPU with 14 CPUs (required ratio on Gautschi AI partition).
 - Generated images and checkpoints are written to `outputs/`.
-- The script now runs posterior sampling after training for partial observations (default: 20% observed pixels).
+- The script now runs posterior sampling after training for partial observations (default: 70% observed pixels).
 
 ## Longer run + dashboard
 
@@ -93,7 +93,7 @@ Notes:
 Posterior sampling is likelihood-guided and configured via:
 
 - `--posterior-digit` (default `7`)
-- `--posterior-observed-fraction` (default `0.2`)
+- `--posterior-observed-fraction` (default `0.7`)
 - `--posterior-guidance-scale` (default `1.5`)
 - `--posterior-likelihood-sigma` (default `0.1`)
 - `--num-posterior-samples` (default `8`)
