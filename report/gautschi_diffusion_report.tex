@@ -272,6 +272,50 @@ Observed fraction & Pixels & Snapshots & $k_{95}$ & $k_{99}$ & Participation rat
 \caption{Normalized singular value spectrum for EDM posterior samples with 20\% observed pixels.}
 \end{figure}
 
+\subsection*{Additional Subsection: Score-Snapshot SVD and Spectrum Overlay}
+We repeated the intrinsic dimensionality analysis by constructing snapshots from the \emph{estimated score field} instead of the samples. For each posterior sample $x^{(j)}$, we evaluated the approximated score at fixed $\sigma_{\text{eval}}=0.1$:
+\[
+s^{(j)} \approx \frac{\hat{x}_0(x^{(j)}, \sigma_{\text{eval}}) - x^{(j)}}{\sigma_{\text{eval}}^2},
+\]
+then formed
+\[
+S = [s^{(1)}, s^{(2)}, \ldots, s^{(N)}] \in \mathbb{R}^{784 \times N},
+\]
+with $N=1024 > 784$, and computed its SVD.
+
+Score-snapshot jobs on Gautschi:
+\begin{itemize}
+  \item 70\% observed: job \texttt{8213437}, run \texttt{edm\_score\_svd\_70pct\_8213437}
+  \item 20\% observed: job \texttt{8213438}, run \texttt{edm\_score\_svd\_20pct\_8213438}
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Observed fraction & Snapshot type & $k_{95}$ & $k_{99}$ & Participation ratio \\
+\midrule
+70\% & Sample (previous) & 1 & 2 & 1.023 \\
+70\% & Score (current) & 63 & 137 & 2.566 \\
+20\% & Sample (previous) & 46 & 154 & 1.735 \\
+20\% & Score (current) & 293 & 464 & 8.786 \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of singular-spectrum intrinsic dimensionality metrics for sample- vs score-based snapshots.}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_score_svd_70pct_8213437/singular_value_spectrum_overlay.png}
+\caption{Overlay of normalized singular value spectra (70\% observed): previous sample-snapshot experiment vs current score-snapshot experiment.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_score_svd_20pct_8213438/singular_value_spectrum_overlay.png}
+\caption{Overlay of normalized singular value spectra (20\% observed): previous sample-snapshot experiment vs current score-snapshot experiment.}
+\end{figure}
+
 \section{Live Dashboard Operation}
 The workflow now maintains a root live dashboard at:
 \begin{itemize}
@@ -293,6 +337,8 @@ and supports:
 Primary scripts used for these experiments:
 \begin{itemize}
   \item \texttt{mnist\_diffusion.py}
+  \item \texttt{posterior\_svd\_analysis.py}
+  \item \texttt{posterior\_score\_svd\_analysis.py}
   \item \texttt{submit\_mnist\_edm\_posterior.slurm}
   \item \texttt{submit\_mnist\_edm\_posterior\_20pct.slurm}
   \item \texttt{serve\_dashboard.sh}
