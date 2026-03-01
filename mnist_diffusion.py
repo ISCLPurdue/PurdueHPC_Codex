@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a DDPM on MNIST and generate plots/dashboard artifacts."""
+"""Train an EDM-style diffusion model on MNIST and generate dashboard artifacts."""
 
 import argparse
 import csv
@@ -20,10 +20,14 @@ from tqdm import tqdm
 
 
 @dataclass
-class DiffusionConfig:
-    timesteps: int = 200
-    beta_start: float = 1e-4
-    beta_end: float = 2e-2
+class EDMConfig:
+    num_steps: int = 100
+    sigma_min: float = 0.002
+    sigma_max: float = 80.0
+    rho: float = 7.0
+    sigma_data: float = 0.5
+    p_mean: float = -1.2
+    p_std: float = 1.2
 
 
 class TimeEmbedding(nn.Module):
@@ -122,50 +126,72 @@ class UNetDenoiser(nn.Module):
         return self.out_conv(F.silu(self.out_norm(h)))
 
 
-class DDPM:
-    def __init__(self, cfg: DiffusionConfig, device: torch.device):
+class EDM:
+    def __init__(self, cfg: EDMConfig, device: torch.device):
         self.cfg = cfg
         self.device = device
-        betas = torch.linspace(cfg.beta_start, cfg.beta_end, cfg.timesteps, device=device)
-        alphas = 1.0 - betas
-        alpha_bar = torch.cumprod(alphas, dim=0)
 
-        self.betas = betas
-        self.alphas = alphas
-        self.alpha_bar = alpha_bar
-        self.sqrt_alpha_bar = torch.sqrt(alpha_bar)
-        self.sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - alpha_bar)
+    def _sigma_to_tensor(self, sigma, batch_size: int) -> torch.Tensor:
+        if isinstance(sigma, float):
+            return torch.full((batch_size, 1, 1, 1), sigma, device=self.device)
+        if sigma.ndim == 1:
+            return sigma[:, None, None, None]
+        return sigma
 
-    def q_sample(self, x0: torch.Tensor, t: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
-        a = self.sqrt_alpha_bar[t][:, None, None, None]
-        b = self.sqrt_one_minus_alpha_bar[t][:, None, None, None]
-        return a * x0 + b * noise
+    def sample_training_sigmas(self, batch_size: int) -> torch.Tensor:
+        rnd = torch.randn(batch_size, device=self.device)
+        return torch.exp(self.cfg.p_mean + self.cfg.p_std * rnd)
 
-    def predict_x0(self, x_t: torch.Tensor, t: torch.Tensor, pred_noise: torch.Tensor) -> torch.Tensor:
-        a = self.sqrt_alpha_bar[t][:, None, None, None]
-        b = self.sqrt_one_minus_alpha_bar[t][:, None, None, None]
-        return (x_t - b * pred_noise) / a
+    def preconditioned_denoise(self, model: nn.Module, x: torch.Tensor, sigma) -> torch.Tensor:
+        sigma = self._sigma_to_tensor(sigma, x.shape[0])
+        sigma_data = self.cfg.sigma_data
+        sigma_sq = sigma * sigma
+        data_sq = sigma_data * sigma_data
+        denom = torch.sqrt(sigma_sq + data_sq)
+
+        c_in = 1.0 / denom
+        c_skip = data_sq / (sigma_sq + data_sq)
+        c_out = sigma * sigma_data / denom
+        c_noise = 0.25 * torch.log(torch.clamp(sigma.squeeze(-1).squeeze(-1).squeeze(-1), min=1e-8))
+
+        model_out = model(c_in * x, c_noise)
+        return c_skip * x + c_out * model_out
+
+    def loss(self, model: nn.Module, x0: torch.Tensor) -> torch.Tensor:
+        sigma = self.sample_training_sigmas(x0.shape[0])[:, None, None, None]
+        noise = torch.randn_like(x0) * sigma
+        x_noisy = x0 + noise
+        denoised = self.preconditioned_denoise(model, x_noisy, sigma)
+
+        sigma_data = self.cfg.sigma_data
+        weight = (sigma * sigma + sigma_data * sigma_data) / torch.clamp((sigma * sigma_data) ** 2, min=1e-8)
+        return (weight * (denoised - x0) ** 2).mean()
+
+    def sigma_schedule(self) -> torch.Tensor:
+        ramp = torch.linspace(0.0, 1.0, self.cfg.num_steps, device=self.device)
+        rho_inv = 1.0 / self.cfg.rho
+        sigmas = (self.cfg.sigma_max ** rho_inv + ramp * (self.cfg.sigma_min ** rho_inv - self.cfg.sigma_max ** rho_inv)) ** self.cfg.rho
+        return torch.cat([sigmas, torch.zeros(1, device=self.device)], dim=0)
 
     @torch.no_grad()
     def sample(self, model: nn.Module, num_samples: int, image_size: int = 28) -> torch.Tensor:
         model.eval()
-        x = torch.randn(num_samples, 1, image_size, image_size, device=self.device)
+        sigmas = self.sigma_schedule()
+        x = torch.randn(num_samples, 1, image_size, image_size, device=self.device) * sigmas[0]
 
-        for i in reversed(range(self.cfg.timesteps)):
-            t = torch.full((num_samples,), i, device=self.device, dtype=torch.long)
-            pred_noise = model(x, t)
+        for i in range(len(sigmas) - 1):
+            sigma = float(sigmas[i].item())
+            sigma_next = float(sigmas[i + 1].item())
+            denoised = self.preconditioned_denoise(model, x, sigma)
+            d_cur = (x - denoised) / max(sigma, 1e-8)
+            x_euler = x + (sigma_next - sigma) * d_cur
 
-            alpha_t = self.alphas[i]
-            alpha_bar_t = self.alpha_bar[i]
-            beta_t = self.betas[i]
-            mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
-
-            if i > 0:
-                z = torch.randn_like(x)
-                sigma = torch.sqrt(beta_t)
-                x = mean + sigma * z
+            if sigma_next > 0.0:
+                denoised_next = self.preconditioned_denoise(model, x_euler, sigma_next)
+                d_next = (x_euler - denoised_next) / max(sigma_next, 1e-8)
+                x = x + (sigma_next - sigma) * 0.5 * (d_cur + d_next)
             else:
-                x = mean
+                x = x_euler
 
         model.train()
         return x.clamp(-1, 1)
@@ -185,51 +211,48 @@ class DDPM:
         hard_data_consistency: bool,
     ) -> torch.Tensor:
         model.eval()
-        x = torch.randn(num_samples, 1, observed_x0.shape[-2], observed_x0.shape[-1], device=self.device)
+        sigmas = self.sigma_schedule()
+        x = torch.randn(num_samples, 1, observed_x0.shape[-2], observed_x0.shape[-1], device=self.device) * sigmas[0]
         y = observed_x0.expand(num_samples, -1, -1, -1)
         m = observed_mask.expand(num_samples, -1, -1, -1)
         observed_frac = float(torch.clamp(m.mean(), min=1e-6).item())
         base_sigma_sq = max(likelihood_sigma * likelihood_sigma, 1e-8)
-        total_steps = max(self.cfg.timesteps - 1, 1)
+        total_steps = max(len(sigmas) - 2, 1)
 
-        for i in reversed(range(self.cfg.timesteps)):
-            t = torch.full((num_samples,), i, device=self.device, dtype=torch.long)
-            pred_noise = model(x, t)
-
-            alpha_t = self.alphas[i]
-            alpha_bar_t = self.alpha_bar[i]
-            beta_t = self.betas[i]
-
-            x0_hat = self.predict_x0(x, t, pred_noise)
-            # Data-consistency projection in x0-space enforces observed pixels exactly.
+        def guided_direction(x_in: torch.Tensor, sigma_val: float, progress: float) -> torch.Tensor:
+            x0_hat = self.preconditioned_denoise(model, x_in, sigma_val)
             if hard_data_consistency:
                 x0_hat = m * y + (1.0 - m) * x0_hat
-                pred_noise = (x - torch.sqrt(alpha_bar_t) * x0_hat) / torch.sqrt(torch.clamp(1.0 - alpha_bar_t, min=1e-8))
 
-            mean = (1.0 / torch.sqrt(alpha_t)) * (x - ((1 - alpha_t) / torch.sqrt(1 - alpha_bar_t)) * pred_noise)
-
-            # Noise-aware masked likelihood: sigma_t^2 = sigma_y^2 + c * (1 - alpha_bar_t).
-            sigma_eff_sq = base_sigma_sq + noise_aware_coeff * float((1.0 - alpha_bar_t).item())
+            sigma_eff_sq = base_sigma_sq + noise_aware_coeff * (sigma_val * sigma_val)
             inv_var = 1.0 / max(sigma_eff_sq, 1e-8)
             grad_x0 = (m * (y - x0_hat) * inv_var) / observed_frac
-            grad_xt = grad_x0 / torch.sqrt(alpha_bar_t)
 
-            # Annealed guidance: weaker in high-noise steps, stronger near final denoise steps.
-            progress = 1.0 - (i / total_steps)
             guide_factor = guidance_min_frac + (1.0 - guidance_min_frac) * (progress**guidance_power)
             step_guidance = guidance_scale * guide_factor
-            mean = mean + step_guidance * beta_t * grad_xt
+            x0_guided = x0_hat + step_guidance * sigma_val * grad_x0
+            return (x_in - x0_guided) / max(sigma_val, 1e-8)
 
-            if i > 0:
-                z = torch.randn_like(x)
-                sigma = torch.sqrt(beta_t)
-                x = mean + sigma * z
+        for i in range(len(sigmas) - 1):
+            sigma = float(sigmas[i].item())
+            sigma_next = float(sigmas[i + 1].item())
+            progress = i / total_steps
+
+            d_cur = guided_direction(x, sigma, progress)
+            x_euler = x + (sigma_next - sigma) * d_cur
+
+            if hard_data_consistency and sigma_next > 0.0:
+                x_obs = y + torch.randn_like(x_euler) * sigma_next
+                x_euler = m * x_obs + (1.0 - m) * x_euler
+
+            if sigma_next > 0.0:
+                d_next = guided_direction(x_euler, sigma_next, min((i + 1) / total_steps, 1.0))
+                x = x + (sigma_next - sigma) * 0.5 * (d_cur + d_next)
                 if hard_data_consistency:
-                    alpha_bar_prev = self.alpha_bar[i - 1]
-                    x_obs = torch.sqrt(alpha_bar_prev) * y + torch.sqrt(1.0 - alpha_bar_prev) * torch.randn_like(x)
+                    x_obs = y + torch.randn_like(x) * sigma_next
                     x = m * x_obs + (1.0 - m) * x
             else:
-                x = mean
+                x = x_euler
                 if hard_data_consistency:
                     x = m * y + (1.0 - m) * x
 
@@ -322,7 +345,7 @@ def save_architecture_schematic(outdir: str) -> str:
     ax.axis("off")
 
     blocks = [
-        (0.02, 0.60, 0.16, 0.18, "Input x_t\\n1x28x28"),
+        (0.02, 0.60, 0.16, 0.18, "Input x_sigma\\n1x28x28"),
         (0.22, 0.60, 0.16, 0.18, "Stem Conv\\n1->64"),
         (0.42, 0.60, 0.16, 0.18, "Down Block 1\\nRes(64)"),
         (0.62, 0.60, 0.16, 0.18, "Down Block 2\\nRes(128)"),
@@ -354,7 +377,7 @@ def save_architecture_schematic(outdir: str) -> str:
     ax.annotate("", xy=(0.68, 0.37), xytext=(0.50, 0.66), arrowprops=dict(arrowstyle="->", lw=1.8, linestyle="--", color="#374151"))
     ax.annotate("", xy=(0.48, 0.37), xytext=(0.30, 0.66), arrowprops=dict(arrowstyle="->", lw=1.8, linestyle="--", color="#374151"))
 
-    ax.set_title("MNIST DDPM U-Net Denoiser Architecture (schematic)", fontsize=18)
+    ax.set_title("MNIST EDM U-Net Denoiser Architecture (schematic)", fontsize=18)
     plt.tight_layout(pad=2.0)
     plt.savefig(schematic_path, dpi=220)
     plt.close(fig)
@@ -582,7 +605,7 @@ def find_digit_example(dataset: datasets.MNIST, target_digit: int) -> torch.Tens
 
 
 def train(args: argparse.Namespace) -> None:
-    run_tag = args.run_tag or datetime.now(timezone.utc).strftime("mnist_ddpm_%Y%m%d_%H%M%S")
+    run_tag = args.run_tag or datetime.now(timezone.utc).strftime("mnist_edm_%Y%m%d_%H%M%S")
     outdir = os.path.join(args.outdir, run_tag)
     outputs_root = args.outdir
     os.makedirs(outdir, exist_ok=True)
@@ -612,7 +635,18 @@ def train(args: argparse.Namespace) -> None:
 
     model = UNetDenoiser(time_dim=args.time_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    diffusion = DDPM(DiffusionConfig(timesteps=args.timesteps, beta_start=args.beta_start, beta_end=args.beta_end), device=device)
+    diffusion = EDM(
+        EDMConfig(
+            num_steps=args.timesteps,
+            sigma_min=args.edm_sigma_min,
+            sigma_max=args.edm_sigma_max,
+            rho=args.edm_rho,
+            sigma_data=args.edm_sigma_data,
+            p_mean=args.edm_p_mean,
+            p_std=args.edm_p_std,
+        ),
+        device=device,
+    )
 
     step_losses: list[float] = []
     epoch_losses: list[float] = []
@@ -634,12 +668,7 @@ def train(args: argparse.Namespace) -> None:
 
             for x0, _ in pbar:
                 x0 = x0.to(device)
-                t = torch.randint(0, args.timesteps, (x0.shape[0],), device=device)
-                noise = torch.randn_like(x0)
-                xt = diffusion.q_sample(x0, t, noise)
-                pred = model(xt, t)
-
-                loss = F.mse_loss(pred, noise)
+                loss = diffusion.loss(model, x0)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -657,7 +686,7 @@ def train(args: argparse.Namespace) -> None:
             mean_epoch_loss = running_loss / max(epoch_steps, 1)
             epoch_losses.append(mean_epoch_loss)
 
-            ckpt = os.path.join(outdir, f"mnist_ddpm_epoch_{epoch + 1}.pt")
+            ckpt = os.path.join(outdir, f"mnist_edm_epoch_{epoch + 1}.pt")
             torch.save({"model": model.state_dict(), "epoch": epoch + 1, "args": vars(args)}, ckpt)
 
             step_plot, epoch_plot = save_loss_plots(step_losses=step_losses, epoch_losses=epoch_losses, outdir=outdir)
@@ -679,6 +708,7 @@ def train(args: argparse.Namespace) -> None:
                 "device": str(device),
                 "total_steps": len(step_losses),
                 "epochs": args.epochs,
+                "diffusion_model": "edm_score_preconditioned",
                 "final_epoch_loss": float(epoch_losses[-1]) if epoch_losses else None,
                 "best_epoch_loss": float(min(epoch_losses)) if epoch_losses else None,
                 "sample_image": os.path.basename(sample_img_path),
@@ -737,6 +767,13 @@ def train(args: argparse.Namespace) -> None:
     final_metrics["posterior_guidance_power"] = args.posterior_guidance_power if posterior_samples_name else None
     final_metrics["posterior_noise_aware_coeff"] = args.posterior_noise_aware_coeff if posterior_samples_name else None
     final_metrics["posterior_hard_data_consistency"] = (not args.posterior_disable_hard_consistency) if posterior_samples_name else None
+    final_metrics["diffusion_model"] = "edm_score_preconditioned"
+    final_metrics["edm_sigma_min"] = args.edm_sigma_min
+    final_metrics["edm_sigma_max"] = args.edm_sigma_max
+    final_metrics["edm_rho"] = args.edm_rho
+    final_metrics["edm_sigma_data"] = args.edm_sigma_data
+    final_metrics["edm_p_mean"] = args.edm_p_mean
+    final_metrics["edm_p_std"] = args.edm_p_std
     final_metrics["posterior_samples_count"] = args.num_posterior_samples if posterior_samples_name else 0
     final_metrics["posterior_samples_image"] = posterior_samples_name
     final_metrics["posterior_overview_image"] = posterior_overview_name
@@ -753,11 +790,11 @@ def train(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Train DDPM for MNIST")
+    p = argparse.ArgumentParser(description="Train EDM-style score diffusion model for MNIST")
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=3e-4)
-    p.add_argument("--timesteps", type=int, default=200)
+    p.add_argument("--timesteps", type=int, default=100)
     p.add_argument("--beta-start", type=float, default=1e-4)
     p.add_argument("--beta-end", type=float, default=2e-2)
     p.add_argument("--time-dim", type=int, default=128)
@@ -769,6 +806,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--outdir", default="./outputs")
     p.add_argument("--run-tag", default="")
     p.add_argument("--force-cpu", action="store_true")
+    p.add_argument("--edm-sigma-min", type=float, default=0.002)
+    p.add_argument("--edm-sigma-max", type=float, default=80.0)
+    p.add_argument("--edm-rho", type=float, default=7.0)
+    p.add_argument("--edm-sigma-data", type=float, default=0.5)
+    p.add_argument("--edm-p-mean", type=float, default=-1.2)
+    p.add_argument("--edm-p-std", type=float, default=1.2)
     p.add_argument("--posterior-digit", type=int, default=7)
     p.add_argument("--posterior-observed-fraction", type=float, default=0.7)
     p.add_argument("--posterior-guidance-scale", type=float, default=1.5)
