@@ -1,0 +1,12 @@
+{
+  "checkpoint": "outputs/edm_dps_20pct_8213218/mnist_edm_epoch_1.pt",
+  "device": "cuda",
+  "num_pixels": 784,
+  "num_snapshots": 1024,
+  "observed_fraction": 0.2,
+  "k95_energy": 45,
+  "k99_energy": 152,
+  "participation_ratio": 1.7181650400161743,
+  "largest_singular_value": 738.0534057617188,
+  "smallest_singular_value": 6.444327883147914e-15
+}

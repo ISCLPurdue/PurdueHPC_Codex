@@ -229,6 +229,49 @@ Validated Gautschi posterior job:
 \caption{EDM posterior samples with noise-aware likelihood, guidance annealing, and projection-based data consistency (20\% revealed).}
 \end{figure}
 
+\section{Intrinsic Dimensionality of Posterior Samples}
+To analyze posterior sample complexity, we generated a large posterior ensemble for each setting and formed a snapshot matrix:
+\[
+X = [x^{(1)}, x^{(2)}, \ldots, x^{(N)}] \in \mathbb{R}^{784 \times N},
+\]
+where each column is a flattened $28\times28$ posterior sample and $N=1024 > 784$.
+We computed
+\[
+X = U\Sigma V^\top,
+\]
+and inspected the singular value spectrum $\{\sigma_i\}$ and cumulative energy.
+
+SVD jobs on Gautschi:
+\begin{itemize}
+  \item 70\% observed: job \texttt{8213341}, run \texttt{edm\_svd\_70pct\_8213341}
+  \item 20\% observed: job \texttt{8213342}, run \texttt{edm\_svd\_20pct\_8213342}
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+Observed fraction & Pixels & Snapshots & $k_{95}$ & $k_{99}$ & Participation ratio \\
+\midrule
+70\% & 784 & 1024 & 1 & 3 & 1.023 \\
+20\% & 784 & 1024 & 45 & 152 & 1.718 \\
+\bottomrule
+\end{tabular}
+\caption{Singular-spectrum summary from posterior snapshot matrices.}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{report/assets/gautschi_edm_svd_70pct_8213341/singular_value_spectrum.png}
+\caption{Normalized singular value spectrum for EDM posterior samples with 70\% observed pixels.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{report/assets/gautschi_edm_svd_20pct_8213342/singular_value_spectrum.png}
+\caption{Normalized singular value spectrum for EDM posterior samples with 20\% observed pixels.}
+\end{figure}
+
 \section{Live Dashboard Operation}
 The workflow now maintains a root live dashboard at:
 \begin{itemize}
