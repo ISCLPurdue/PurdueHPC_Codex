@@ -258,6 +258,26 @@ Primary scripts tracked in Git:
   \item \texttt{serve\_dashboard.sh}
 \end{itemize}
 
+\subsection*{Persistent SSH Connection Reuse}
+To avoid repeated password + 2FA prompts for each \texttt{ssh}/\texttt{scp} call, use SSH multiplexing with a persistent control socket:
+\begin{verbatim}
+ssh -M -S /tmp/gautschi_mux.sock -o ControlPersist=8h -N \
+  rmaulik@gautschi.rcac.purdue.edu
+\end{verbatim}
+
+Then reuse that authenticated channel:
+\begin{verbatim}
+ssh -S /tmp/gautschi_mux.sock rmaulik@gautschi.rcac.purdue.edu
+scp -o ControlMaster=auto -o ControlPath=/tmp/gautschi_mux.sock \
+  <src> <dst>
+\end{verbatim}
+
+Check and close the master session:
+\begin{verbatim}
+ssh -S /tmp/gautschi_mux.sock -O check rmaulik@gautschi.rcac.purdue.edu
+ssh -S /tmp/gautschi_mux.sock -O exit  rmaulik@gautschi.rcac.purdue.edu
+\end{verbatim}
+
 To regenerate this report PDF locally:
 \begin{verbatim}
 cd PurdueHPC_Codex/report
