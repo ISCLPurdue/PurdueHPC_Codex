@@ -29,23 +29,32 @@ No credentials or authentication secrets are stored in this report.
 \section{Allocation and Job Accounting}
 Current allocation snapshot from \texttt{slist} on Gautschi:
 \begin{itemize}
-  \item AI partition GPU-hour balance: \textbf{43,798.5}
+  \item AI partition GPU-hour balance: \textbf{43,795.8}
   \item CPU partition balance: \textbf{0}
 \end{itemize}
 
-Completed follow-up experiment jobs (EDM formulation):
+Completed follow-up experiment jobs (EDM + intrinsic-dimension studies):
 \begin{longtable}{l l l r r}
 \toprule
 Job ID & Name & State & Elapsed (s) & GPUs \\
 \midrule
 8213207 & mnist\_edm & COMPLETED & 28 & 1 \\
 8213218 & mnist\_edm20 & COMPLETED & 30 & 1 \\
+8213341 & svd70 & COMPLETED & 32 & 1 \\
+8213342 & svd20 & COMPLETED & 32 & 1 \\
+8213437 & ssvd70 & COMPLETED & 27 & 1 \\
+8213438 & ssvd20 & COMPLETED & 27 & 1 \\
+8213702 & gid70 & COMPLETED & 30 & 1 \\
+8213703 & gid20 & COMPLETED & 30 & 1 \\
+8214018 & psvd & COMPLETED & 27 & 1 \\
+8214200 & rsvd20 & COMPLETED & 36 & 1 \\
+8214779 & rsvd0 & COMPLETED & 43 & 1 \\
 \bottomrule
 \end{longtable}
 
-Estimated direct GPU-hours from these two runs:
+Estimated direct GPU-hours from these accounted runs:
 \[
-\text{GPU-hours} = \frac{28 + 30}{3600} \times 1 = 0.016 \text{ GPU-hours (approx.)}
+\text{GPU-hours} = \frac{342}{3600} \times 1 = 0.095 \text{ GPU-hours (approx.)}
 \]
 
 \section{Diffusion Model Formulation (EDM)}
@@ -240,39 +249,40 @@ We computed
 X = U\Sigma V^\top,
 \]
 and inspected the singular value spectrum $\{\sigma_i\}$ and cumulative energy.
+For this SVD-based analysis, we report
+\[
+d_{95}=\min\left\{k:\frac{\sum_{i=1}^{k}\sigma_i^2}{\sum_{j}\sigma_j^2}\ge 0.95\right\},\qquad
+d_{99}=\min\left\{k:\frac{\sum_{i=1}^{k}\sigma_i^2}{\sum_{j}\sigma_j^2}\ge 0.99\right\}.
+\]
 
 SVD jobs on Gautschi:
 \begin{itemize}
   \item 70\% observed: job \texttt{8213341}, run \texttt{edm\_svd\_70pct\_8213341}
   \item 20\% observed: job \texttt{8213342}, run \texttt{edm\_svd\_20pct\_8213342}
+  \item Prior (unconditional): job \texttt{8214018}, run \texttt{edm\_prior\_svd\_8214018}
 \end{itemize}
 
 \begin{table}[H]
 \centering
 \begin{tabular}{lrrrrr}
 \toprule
-Observed fraction & Pixels & Snapshots & $k_{95}$ & $k_{99}$ & Participation ratio \\
+Case & Pixels & Snapshots & $d_{95}$ & $d_{99}$ & Participation ratio \\
 \midrule
 70\% & 784 & 1024 & 1 & 3 & 1.023 \\
 20\% & 784 & 1024 & 45 & 152 & 1.718 \\
+Prior (unconditional) & 784 & 1024 & 47 & 158 & 1.812 \\
 \bottomrule
 \end{tabular}
-\caption{Singular-spectrum summary from posterior snapshot matrices.}
+\caption{Singular-spectrum summary from sample snapshot matrices (posterior-conditioned and prior-unconditional).}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.82\textwidth]{report/assets/gautschi_edm_svd_70pct_8213341/singular_value_spectrum.png}
-\caption{Normalized singular value spectrum for EDM posterior samples with 70\% observed pixels.}
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_svd_combined/singular_value_spectrum_samples_70_vs_20.png}
+\caption{Normalized singular value spectrum for sample snapshots: 70\% observed, 20\% observed, and prior-unconditional.}
 \end{figure}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.82\textwidth]{report/assets/gautschi_edm_svd_20pct_8213342/singular_value_spectrum.png}
-\caption{Normalized singular value spectrum for EDM posterior samples with 20\% observed pixels.}
-\end{figure}
-
-\subsection*{Additional Subsection: Score-Snapshot SVD and Spectrum Overlay}
+\subsection*{Additional Subsection: Score-Snapshot SVD and Combined Spectra}
 We repeated the intrinsic dimensionality analysis by constructing snapshots from the \emph{estimated score field} instead of the samples. For each posterior sample $x^{(j)}$, we evaluated the approximated score at fixed $\sigma_{\text{eval}}=0.1$:
 \[
 s^{(j)} \approx \frac{\hat{x}_0(x^{(j)}, \sigma_{\text{eval}}) - x^{(j)}}{\sigma_{\text{eval}}^2},
@@ -287,33 +297,123 @@ Score-snapshot jobs on Gautschi:
 \begin{itemize}
   \item 70\% observed: job \texttt{8213437}, run \texttt{edm\_score\_svd\_70pct\_8213437}
   \item 20\% observed: job \texttt{8213438}, run \texttt{edm\_score\_svd\_20pct\_8213438}
+  \item Prior (unconditional): job \texttt{8214018}, run \texttt{edm\_prior\_svd\_8214018}
 \end{itemize}
 
 \begin{table}[H]
 \centering
 \begin{tabular}{lrrrr}
 \toprule
-Observed fraction & Snapshot type & $k_{95}$ & $k_{99}$ & Participation ratio \\
+Case & Snapshot type & $d_{95}$ & $d_{99}$ & Participation ratio \\
 \midrule
 70\% & Sample (previous) & 1 & 2 & 1.023 \\
 70\% & Score (current) & 63 & 137 & 2.566 \\
 20\% & Sample (previous) & 46 & 154 & 1.735 \\
 20\% & Score (current) & 293 & 464 & 8.786 \\
+Prior (unconditional) & Sample & 47 & 158 & 1.812 \\
+Prior (unconditional) & Score & 374 & 536 & 66.136 \\
 \bottomrule
 \end{tabular}
-\caption{Comparison of singular-spectrum intrinsic dimensionality metrics for sample- vs score-based snapshots.}
+\caption{Comparison of singular-spectrum intrinsic-dimensionality metrics for sample- vs score-based snapshots, including prior-only (no posterior sampling).}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_score_svd_70pct_8213437/singular_value_spectrum_overlay.png}
-\caption{Overlay of normalized singular value spectra (70\% observed): previous sample-snapshot experiment vs current score-snapshot experiment.}
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_svd_combined/singular_value_spectrum_scores_70_vs_20.png}
+\caption{Normalized singular value spectrum for score snapshots: 70\% observed, 20\% observed, and prior-unconditional.}
 \end{figure}
+
+\subsection*{Additional Subsection: Randomized Top-20 Score Spectrum vs Visible Fraction}
+We ran an additional score-snapshot experiment for progressively increased visible-pixel fractions:
+\[
+0\%,\; 20\%,\; 40\%,\; 60\%,\; 80\%.
+\]
+For each fraction, we formed the score snapshot matrix
+\[
+S = [s^{(1)}, \ldots, s^{(N)}] \in \mathbb{R}^{784 \times 1024},
+\]
+and used a randomized SVD (instead of full SVD) to estimate only the leading 20 singular values.
+Given random test matrix $\Omega$, we computed
+\[
+Y = S\Omega,\quad Q=\mathrm{orth}(Y),\quad B=Q^\top S,
+\]
+then took the leading singular values of $B$ as approximations of the leading singular values of $S$.
+
+Randomized sweep job on Gautschi:
+\begin{itemize}
+  \item job \texttt{8214779}, run \texttt{edm\_randomized\_score\_svd\_sweep\_with\_prior\_8214779}
+\end{itemize}
+Because this is a truncated top-20 spectrum estimate, we use it here for comparative spectral shape only (not for intrinsic-dimension indicators).
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_score_svd_20pct_8213438/singular_value_spectrum_overlay.png}
-\caption{Overlay of normalized singular value spectra (20\% observed): previous sample-snapshot experiment vs current score-snapshot experiment.}
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_randomized_score_svd_sweep_with_prior_8214779/randomized_score_spectrum_top20_overlay.png}
+\caption{Randomized top-20 score-snapshot spectrum for visible fractions 0/20/40/60/80\% (0\% is prior-only sampling).}
+\end{figure}
+
+\subsection*{Additional Subsection: Sampling-Free Posterior Geometry ID}
+To quantify how partial observations change intrinsic dimensionality \emph{without posterior sampling}, we used a local Gaussian approximation around a MAP point.
+For each observed mask, we estimated $\hat{x}_{\mathrm{MAP}}$ using score-guided ascent on:
+\[
+\nabla_x \log p(x \mid y, M)
+\approx s_\theta(x,\sigma_{\mathrm{eval}})
+\;+\; \frac{M^\top (y - Mx)}{\sigma_y^2},
+\]
+then formed a local posterior precision proxy:
+\[
+\Lambda(\hat{x}_{\mathrm{MAP}})
+\approx -J_s(\hat{x}_{\mathrm{MAP}}, \sigma_{\mathrm{eval}})
+\;+\; \frac{M^\top M}{\sigma_y^2},
+\]
+where $J_s$ is the Jacobian of the approximated score.
+Let the (nonnegative) precision eigenvalues be sorted in descending order:
+\[
+\lambda_1 \ge \lambda_2 \ge \cdots \ge \lambda_{784} \ge 0.
+\]
+We define normalized precision-energy weights
+\[
+w_i = \frac{\lambda_i}{\sum_{j=1}^{784}\lambda_j},
+\]
+and cumulative precision energy
+\[
+E(k) = \sum_{i=1}^{k} w_i.
+\]
+Then the codimension thresholds are computed as the \emph{smallest} indices whose cumulative precision energy reaches the target level:
+\[
+c_{95} = \min\{k:\; E(k)\ge 0.95\}, \qquad
+c_{99} = \min\{k:\; E(k)\ge 0.99\}.
+\]
+Finally, we convert codimension to an intrinsic-dimension proxy by subtracting from ambient dimension 784:
+\[
+d_{95}^{\mathrm{proxy}} = 784 - c_{95}, \qquad
+d_{99}^{\mathrm{proxy}} = 784 - c_{99}.
+\]
+
+Geometry-ID jobs on Gautschi:
+\begin{itemize}
+  \item 70\% observed: job \texttt{8213702}, run \texttt{edm\_geometry\_id\_70pct\_8213702}
+  \item 20\% observed: job \texttt{8213703}, run \texttt{edm\_geometry\_id\_20pct\_8213703}
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Observed fraction & $c_{95}$ & $d_{95}^{\mathrm{proxy}}$ & $c_{99}$ & $d_{99}^{\mathrm{proxy}}$ \\
+\midrule
+70\% & 693 & 91 & 747 & 37 \\
+20\% & 654 & 130 & 724 & 60 \\
+\bottomrule
+\end{tabular}
+\caption{Sampling-free posterior-geometry intrinsic-dimension proxies from local precision spectra.}
+\end{table}
+
+These sampling-free proxies show the expected trend: with fewer observed pixels (20\%), the posterior is less constrained and has higher intrinsic dimensionality than the 70\% observed case.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{report/assets/gautschi_edm_geometry_id_combined/local_covariance_spectrum_70_vs_20.png}
+\caption{Sampling-free local covariance spectrum (MAP + score-Jacobian approximation): 70\% observed vs 20\% observed.}
 \end{figure}
 
 \section{Live Dashboard Operation}
@@ -339,6 +439,9 @@ Primary scripts used for these experiments:
   \item \texttt{mnist\_diffusion.py}
   \item \texttt{posterior\_svd\_analysis.py}
   \item \texttt{posterior\_score\_svd\_analysis.py}
+  \item \texttt{posterior\_score\_randomized\_svd\_sweep.py}
+  \item \texttt{prior\_score\_svd\_analysis.py}
+  \item \texttt{posterior\_geometry\_id\_analysis.py}
   \item \texttt{submit\_mnist\_edm\_posterior.slurm}
   \item \texttt{submit\_mnist\_edm\_posterior\_20pct.slurm}
   \item \texttt{serve\_dashboard.sh}

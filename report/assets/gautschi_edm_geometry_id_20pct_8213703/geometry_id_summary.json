@@ -1,0 +1,31 @@
+{
+  "checkpoint": "outputs/edm_dps_20pct_8213218/mnist_edm_epoch_1.pt",
+  "device": "cuda",
+  "num_pixels": 784,
+  "posterior_digit": 7,
+  "observed_fraction": 0.2,
+  "num_masks": 3,
+  "mask_seed_stride": 101,
+  "score_eval_sigma": 0.1,
+  "likelihood_sigma": 0.1,
+  "map_steps": 350,
+  "map_step_size": 0.07,
+  "map_init_sigma": 0.5,
+  "covariance_ridge": 1.0,
+  "map_grad_norm_mean": 79.00516891479492,
+  "map_grad_norm_max": 97.9686050415039,
+  "local_covariance_spectrum_metrics": {
+    "k95_energy": 784,
+    "k99_energy": 784,
+    "participation_ratio": 70.7417221069336,
+    "largest_eigenvalue": 0.004510341212153435,
+    "smallest_eigenvalue": 1.0
+  },
+  "precision_codimension_metrics": {
+    "codim95_precision_energy": 654,
+    "codim99_precision_energy": 724,
+    "intrinsic_dim95_proxy": 130,
+    "intrinsic_dim99_proxy": 60,
+    "precision_participation_ratio": 646.242919921875
+  }
+}

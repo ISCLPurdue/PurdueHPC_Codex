@@ -1,0 +1,21 @@
+{
+  "checkpoint": "outputs/edm_dps_70pct_8213207/mnist_edm_epoch_1.pt",
+  "device": "cuda",
+  "num_pixels": 784,
+  "num_snapshots": 1024,
+  "score_eval_sigma": 0.1,
+  "sample_snapshot_metrics": {
+    "d95_energy": 47,
+    "d99_energy": 158,
+    "participation_ratio": 1.811767816543579,
+    "largest_singular_value": 732.211181640625,
+    "smallest_singular_value": 0.03851105272769928
+  },
+  "score_snapshot_metrics": {
+    "d95_energy": 374,
+    "d99_energy": 536,
+    "participation_ratio": 66.13570404052734,
+    "largest_singular_value": 960.2024536132812,
+    "smallest_singular_value": 4.751245021820068
+  }
+}

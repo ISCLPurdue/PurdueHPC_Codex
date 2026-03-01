@@ -1,0 +1,41 @@
+{
+  "checkpoint": "outputs/edm_dps_70pct_8213207/mnist_edm_epoch_1.pt",
+  "device": "cuda",
+  "num_snapshots": 1024,
+  "num_pixels": 784,
+  "score_eval_sigma": 0.1,
+  "top_k": 20,
+  "oversample": 10,
+  "niter": 2,
+  "metrics_by_fraction_topk": {
+    "20pct": {
+      "observed_fraction": 0.2,
+      "d95_topk": 14,
+      "d99_topk": 19,
+      "largest_singular_value": 2976.380859375,
+      "smallest_singular_value_topk": 302.0498962402344
+    },
+    "40pct": {
+      "observed_fraction": 0.4,
+      "d95_topk": 14,
+      "d99_topk": 19,
+      "largest_singular_value": 2585.142578125,
+      "smallest_singular_value_topk": 274.02545166015625
+    },
+    "60pct": {
+      "observed_fraction": 0.6,
+      "d95_topk": 14,
+      "d99_topk": 19,
+      "largest_singular_value": 2779.81787109375,
+      "smallest_singular_value_topk": 276.3763732910156
+    },
+    "80pct": {
+      "observed_fraction": 0.8,
+      "d95_topk": 14,
+      "d99_topk": 19,
+      "largest_singular_value": 2650.31689453125,
+      "smallest_singular_value_topk": 239.51625061035156
+    }
+  },
+  "plot": "randomized_score_spectrum_top20_overlay.png"
+}
